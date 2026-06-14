@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  passwordHash        String
+  publicKey           String   @unique
+  encryptedPrivateKey String
+  kdfSalt             String
+  kdfIv               String
+  role                String   @default("ATTENDEE")
+  createdAt           DateTime @default(now())
+
+  events Event[] @relation("OrganizerEvents")
+}
+
+model Event {
+  id           String   @id @default(cuid())
+  organizerId  String
+  organizer    User     @relation("OrganizerEvents", fields: [organizerId], references: [id])
+  name         String
+  description  String
+  datetime     DateTime
+  venue        String
+  imageUrl     String?
+  price        Float
+  ticketCount  Int
+  ncTBatchRef  String?
+  status       String   @default("DRAFT")
+  createdAt    DateTime @default(now())
+
+  @@index([organizerId])
+  @@index([status])
+}
