@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+
+kind: Deployment
+
+metadata:
+  name: miners
+
+spec:
+
+  replicas: 4
+
+  selector:
+    matchLabels:
+      app: miner
+
+  template:
+
+    metadata:
+      labels:
+        app: miner
+
+    spec:
+
+      containers:
+
+      - name: worker
+
+        image: ianott/blockchain-worker:latest
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
