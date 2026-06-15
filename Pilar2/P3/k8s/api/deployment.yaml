@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: blockchain-consumidor
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: blockchain-consumidor
+
+  template:
+
+    metadata:
+      labels:
+        app: blockchain-consumidor
+
+    spec:
+
+      containers:
+
+      - name: consumidor
+
+        image: ianott/blockchain-consumidor3:latest
+
+        ports:
+
+        - containerPort: 8000
+        
+      
