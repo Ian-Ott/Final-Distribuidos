@@ -147,3 +147,13 @@ def validate():
             return {"valid":False}
 
     return {"valid":True}
+
+@app.get("/blockchain")
+def get_blockchain():
+
+    return {
+
+        "total_bloques":len(blockchain),
+
+        "blockchain":blockchain
+    }

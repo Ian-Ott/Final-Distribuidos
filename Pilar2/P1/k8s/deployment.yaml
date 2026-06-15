@@ -22,4 +22,7 @@ spec:
 
         ports:
         - containerPort: 8000
+        resources:
+            limits:
+              nvidia.com/gpu: 1
       
