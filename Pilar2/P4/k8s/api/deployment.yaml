@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: blockchain-nct
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: blockchain-nct
+
+  template:
+
+    metadata:
+      labels:
+        app: blockchain-nct
+
+    spec:
+
+      containers:
+
+      - name: nct
+
+        image: bachi7/blockchain-nct4:latest
+
+        ports:
+
+        - containerPort: 8000
+        
+      
