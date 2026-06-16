@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trp
+  template:
+    metadata:
+      labels:
+        app: trp
+    spec:
+      serviceAccountName: trp-sa
+      containers:
+      - name: trp
+        image: bachi7/blockchain-trp:latest
