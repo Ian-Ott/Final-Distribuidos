@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function NewEventPage() {
   const router = useRouter();
@@ -53,38 +54,80 @@ export default function NewEventPage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl w-full px-4 py-10">
-      <h1 className="text-2xl font-semibold mb-1">Nuevo evento</h1>
-      <p className="text-sm text-zinc-500 mb-6">
-        Tras crear el evento, podés emitir sus entradas a la blockchain firmando con tu clave.
-      </p>
+    <div className="mx-auto max-w-3xl w-full px-4 sm:px-6 py-10 sm:py-14">
+      <Link
+        href="/dashboard"
+        className="inline-flex items-center gap-1.5 text-[13px] sm:text-[14px] text-[var(--muted)] hover:text-[var(--ink)] transition-colors mb-5 sm:mb-6"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Volver al panel
+      </Link>
 
-      <form onSubmit={handleSubmit} className="space-y-4 bg-white dark:bg-zinc-950 border border-black/10 dark:border-white/10 rounded-2xl p-6">
-        <Field label="Nombre">
-          <input required value={form.name} onChange={(e) => update("name", e.target.value)} className={inputCls} />
+      <header className="mb-6 sm:mb-8 space-y-2">
+        <p className="eyebrow">Crear evento</p>
+        <h1 className="text-[30px] sm:text-[40px] lg:text-[44px] leading-[1.05] tracking-[-0.025em] font-semibold">
+          Nuevo evento
+        </h1>
+        <p className="text-[14px] sm:text-[15px] text-[var(--muted)] max-w-xl">
+          Cargá los datos básicos. Después firmás la emisión con tu clave para mintar el lote.
+        </p>
+      </header>
+
+      <form onSubmit={handleSubmit} className="card p-5 sm:p-8 space-y-5 sm:space-y-6">
+        <Field label="Nombre del evento">
+          <input
+            required
+            value={form.name}
+            onChange={(e) => update("name", e.target.value)}
+            className="input"
+            placeholder="Ej. Festival Distribuido 2026"
+          />
         </Field>
+
         <Field label="Descripción">
-          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} className={inputCls} />
+          <textarea
+            value={form.description}
+            onChange={(e) => update("description", e.target.value)}
+            rows={3}
+            className="textarea"
+            placeholder="Lo que el asistente debe saber sobre el evento."
+          />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
+
+        <div className="grid sm:grid-cols-2 gap-5">
           <Field label="Fecha y hora">
             <input
               type="datetime-local"
               required
               value={form.datetime}
               onChange={(e) => update("datetime", e.target.value)}
-              className={inputCls}
+              className="input"
             />
           </Field>
           <Field label="Lugar">
-            <input required value={form.venue} onChange={(e) => update("venue", e.target.value)} className={inputCls} />
+            <input
+              required
+              value={form.venue}
+              onChange={(e) => update("venue", e.target.value)}
+              className="input"
+              placeholder="Auditorio, sala, dirección…"
+            />
           </Field>
         </div>
-        <Field label="URL de imagen (opcional)">
-          <input value={form.imageUrl} onChange={(e) => update("imageUrl", e.target.value)} className={inputCls} />
+
+        <Field label="Imagen (URL opcional)">
+          <input
+            value={form.imageUrl}
+            onChange={(e) => update("imageUrl", e.target.value)}
+            className="input"
+            placeholder="https://…"
+          />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Precio">
+
+        <div className="grid sm:grid-cols-2 gap-5">
+          <Field label="Precio ($AR)">
             <input
               type="number"
               min="0"
@@ -92,7 +135,7 @@ export default function NewEventPage() {
               required
               value={form.price}
               onChange={(e) => update("price", e.target.value)}
-              className={inputCls}
+              className="input"
             />
           </Field>
           <Field label="Cantidad de entradas">
@@ -102,26 +145,37 @@ export default function NewEventPage() {
               required
               value={form.ticketCount}
               onChange={(e) => update("ticketCount", e.target.value)}
-              className={inputCls}
+              className="input"
             />
           </Field>
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div
+          className="rounded-[var(--radius-sm)] px-4 py-3 text-[13px] flex items-start gap-3"
+          style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="flex-shrink-0 mt-0.5">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M12 8v5M12 16.5v.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          <span>
+            La cantidad de entradas se materializa al emitir. Una vez emitido, el lote es inmutable —
+            la firma cubre el conjunto completo.
+          </span>
+        </div>
 
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="px-4 py-2 text-sm rounded-md border border-black/10 dark:border-white/10"
-          >
+        {error && (
+          <div className="text-[13px] text-[var(--danger)] bg-[var(--danger-soft)] rounded-[var(--radius-sm)] px-3 py-2.5">
+            {error}
+          </div>
+        )}
+
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-3 sm:pt-2 border-t border-[var(--line)]">
+          <button type="button" onClick={() => router.back()} className="btn btn-secondary w-full sm:w-auto">
             Cancelar
           </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="px-4 py-2 text-sm rounded-md bg-black text-white dark:bg-white dark:text-black disabled:opacity-60"
-          >
+          <button type="submit" disabled={loading} className="btn btn-primary w-full sm:w-auto">
+            {loading && <span className="spinner" />}
             {loading ? "Creando…" : "Crear evento"}
           </button>
         </div>
@@ -130,13 +184,10 @@ export default function NewEventPage() {
   );
 }
 
-const inputCls =
-  "w-full rounded-md border border-black/10 dark:border-white/10 bg-transparent px-3 py-2 text-sm";
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block space-y-1">
-      <span className="text-sm font-medium">{label}</span>
+    <label className="field">
+      <span className="field-label">{label}</span>
       {children}
     </label>
   );
