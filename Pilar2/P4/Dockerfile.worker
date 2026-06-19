@@ -11,6 +11,7 @@ RUN nvcc \
     brute_force_range.cu \
     -o minero
 
+
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
 WORKDIR /app
