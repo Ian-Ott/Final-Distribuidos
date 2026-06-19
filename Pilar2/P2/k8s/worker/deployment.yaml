@@ -26,7 +26,3 @@ spec:
       - name: worker
 
         image: ianott/blockchain-worker:latest
-
-        resources:
-          limits:
-            nvidia.com/gpu: 1

@@ -62,72 +62,64 @@ def transaction(tx:Transaction):
 
 
 @app.post("/create-block")
-
 def create_block():
-
-    if len(pending_transactions)==0:
-
-        return {"error":"sin transacciones"}
+    if len(pending_transactions) == 0:
+        return {"error": "sin transacciones"}
 
     block = {
-
-        "index":len(blockchain),
-
-        "timestamp":time.time(),
-
-        "transactions":pending_transactions.copy(),
-
-        "previous_hash":blockchain[-1]["hash"]
+        "index": len(blockchain),
+        "timestamp": time.time(),
+        "transactions": pending_transactions.copy(),
+        "previous_hash": blockchain[-1]["hash"]
     }
 
+    # Aseguramos que la cola de soluciones empiece limpia para este bloque
+    try:
+        channel.queue_purge(queue='soluciones')
+    except Exception:
+        pass
+
     for i in range(WORKERS):
-
         inicio = i * rango
-
-        if i == WORKERS-1:
-
+        if i == WORKERS - 1:
             fin = TOTAL
-
         else:
-
-            fin = (i+1)*rango - 1
+            fin = (i + 1) * rango - 1
 
         tarea = {
-
-            "difficulty":"00",
-
-            "data":json.dumps(block),
-
-            "start":inicio,
-
-            "end":fin
+            "difficulty": "00",
+            "data": json.dumps(block),
+            "start": inicio,
+            "end": fin
         }
 
         channel.basic_publish(
-        exchange='',
-        routing_key='tareas',
-        body=json.dumps(tarea)
-    )
+            exchange='',
+            routing_key='tareas',
+            body=json.dumps(tarea)
+        )
+
     body = None
     while body is None:
-
         method, properties, body = channel.basic_get(
             queue='soluciones',
             auto_ack=True
         )
-
         if body is None:
+            time.sleep(0.5) # Un delay menor para responder más rápido
 
-            time.sleep(1)
     solucion = json.loads(body)
-
     block["nonce"] = solucion["nonce"]
-
     block["hash"] = solucion["hash"]
 
     blockchain.append(block)
-
     pending_transactions.clear()
+
+    # Purgamos por si algún otro worker envió una solución un milisegundo después
+    try:
+        channel.queue_purge(queue='soluciones')
+    except Exception:
+        pass
 
     return block
 
