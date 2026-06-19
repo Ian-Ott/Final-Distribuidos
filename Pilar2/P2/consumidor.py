@@ -103,7 +103,7 @@ def create_block():
         inicio_espera = time.time()
         body = None
         while body is None:
-             if time.time() - inicio_espera > timeout:
+            if time.time() - inicio_espera > timeout:
                 return {"error": "timeout esperando solución"}
             
             method, properties, body = channel.basic_get(
