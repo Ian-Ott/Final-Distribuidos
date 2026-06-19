@@ -17,7 +17,7 @@ spec:
         # Usas tu misma imagen porque adentro ya tiene el binario "./minero" compilado con CUDA
         image: ianott/blockchain-worker:latest
         # Sobrescribimos el comando para que este Pod levante la API de la GPU en vez del worker
-        command: ["uvicorn", "gpu_server:app", "--host", "0.0.0.0", "--port", "8000"]
+        command: ["uvicorn", "gpu-server:app", "--host", "0.0.0.0", "--port", "8000"]
         resources:
           limits:
             nvidia.com/gpu: 1 # <--- Este es el único Pod que pide la GPU

@@ -22,7 +22,9 @@ spec:
     spec:
 
       containers:
-
       - name: worker
-
         image: ianott/blockchain-worker:latest
+
+        command:
+        - python3
+        - worker.py

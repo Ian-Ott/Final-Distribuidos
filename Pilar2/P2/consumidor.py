@@ -38,18 +38,7 @@ class Transaction(BaseModel):
     amount:float
 
 
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters("rabbitmq")
-)
 
-channel = connection.channel()
-
-
-channel.queue_declare(
-    queue='tareas'
-)
-
-channel.queue_declare(queue='soluciones')
 
 
 @app.post("/transaction")
@@ -63,65 +52,84 @@ def transaction(tx:Transaction):
 
 @app.post("/create-block")
 def create_block():
-    if len(pending_transactions) == 0:
-        return {"error": "sin transacciones"}
+    connection = pika.BlockingConnection(
+    pika.ConnectionParameters("rabbitmq")
+    )
 
-    block = {
-        "index": len(blockchain),
-        "timestamp": time.time(),
-        "transactions": pending_transactions.copy(),
-        "previous_hash": blockchain[-1]["hash"]
-    }
+    channel = connection.channel()
 
-    # Aseguramos que la cola de soluciones empiece limpia para este bloque
     try:
-        channel.queue_purge(queue='soluciones')
-    except Exception:
-        pass
+        channel.queue_declare(
+            queue='tareas'
+        )
 
-    for i in range(WORKERS):
-        inicio = i * rango
-        if i == WORKERS - 1:
-            fin = TOTAL
-        else:
-            fin = (i + 1) * rango - 1
+        channel.queue_declare(queue='soluciones')
+        if len(pending_transactions) == 0:
+            return {"error": "sin transacciones"}
 
-        tarea = {
-            "difficulty": "00",
-            "data": json.dumps(block),
-            "start": inicio,
-            "end": fin
+        block = {
+            "index": len(blockchain),
+            "timestamp": time.time(),
+            "transactions": pending_transactions.copy(),
+            "previous_hash": blockchain[-1]["hash"]
         }
 
-        channel.basic_publish(
-            exchange='',
-            routing_key='tareas',
-            body=json.dumps(tarea)
-        )
+        # Aseguramos que la cola de soluciones empiece limpia para este bloque
+        try:
+            channel.queue_purge(queue='soluciones')
+        except Exception:
+            pass
 
-    body = None
-    while body is None:
-        method, properties, body = channel.basic_get(
-            queue='soluciones',
-            auto_ack=True
-        )
-        if body is None:
-            time.sleep(0.5) # Un delay menor para responder más rápido
+        for i in range(WORKERS):
+            inicio = i * rango
+            if i == WORKERS - 1:
+                fin = TOTAL
+            else:
+                fin = (i + 1) * rango - 1
 
-    solucion = json.loads(body)
-    block["nonce"] = solucion["nonce"]
-    block["hash"] = solucion["hash"]
+            tarea = {
+                "difficulty": "00",
+                "data": json.dumps(block),
+                "start": inicio,
+                "end": fin
+            }
 
-    blockchain.append(block)
-    pending_transactions.clear()
+            channel.basic_publish(
+                exchange='',
+                routing_key='tareas',
+                body=json.dumps(tarea)
+            )
+        timeout = 120
+        inicio_espera = time.time()
+        body = None
+        while body is None:
+             if time.time() - inicio_espera > timeout:
+                return {"error": "timeout esperando solución"}
+            
+            method, properties, body = channel.basic_get(
+                queue='soluciones',
+                auto_ack=True
+            )
+            if body is None:
+                time.sleep(0.5) # Un delay menor para responder más rápido
 
-    # Purgamos por si algún otro worker envió una solución un milisegundo después
-    try:
-        channel.queue_purge(queue='soluciones')
-    except Exception:
-        pass
+        solucion = json.loads(body)
+        block["nonce"] = solucion["nonce"]
+        block["hash"] = solucion["hash"]
 
-    return block
+        blockchain.append(block)
+        pending_transactions.clear()
+
+        # Purgamos por si algún otro worker envió una solución un milisegundo después
+        try:
+            channel.queue_purge(queue='soluciones')
+        except Exception:
+            pass
+
+        return block
+    finally:
+        if connection.is_open:
+            connection.close()
 
 
 @app.get("/validate")
