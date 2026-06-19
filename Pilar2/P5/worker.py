@@ -1,72 +1,77 @@
 import pika
-import subprocess
 import json
-import time
-import redis
-import uuid
-import threading
+import requests
+import os
 
-WORKER_ID = str(uuid.uuid4())[:8]
-HAS_GPU = True  # Mina en GPU
+# URL del contenedor central que tiene la RTX 4060 asignada
+GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/mine")
 
-# Retry loop para conectarse a rabbitmq
-def connect_rabbitmq():
-    while True:
-        try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
-            return connection
-        except Exception:
-            print("Esperando RabbitMQ...")
-            time.sleep(3)
-
-# Retry loop para conectarse a redis
-def connect_redis():
-    while True:
-        try:
-            r = redis.Redis(host="redis", port=6379, decode_responses=True)
-            r.ping()
-            return r
-        except Exception:
-            time.sleep(3)
-
-r = connect_redis()
-connection = connect_rabbitmq()
+# Conexión a RabbitMQ
+connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
 channel = connection.channel()
+
+# Declaramos las mismas colas
 channel.queue_declare(queue='tareas')
 channel.queue_declare(queue='soluciones')
 
-# Keep-alive, se identifica como GPU en redis. El TTL es clave: si el worker muere o se desconecta,
-# después de 30 segundos esa clave desaparece sola de Redis.
-# El TrP monitorea estas claves para saber cuántos workers están vivos y de qué tipo son.
-def heartbeat_loop():
-    while True:
-        r.setex(f"heartbeat:{WORKER_ID}", 30, "gpu" if HAS_GPU else "cpu")
-        time.sleep(10)
-
-threading.Thread(target=heartbeat_loop, daemon=True).start()
-
-# Este worker delega el minado a un proceso externo:
-# Se ejecuta el binario ./minero como si lo corrierams en la terminal, pasándole los parámetros como argumentos.
-# Ese binario es el minero CUDA (PILAR 1) compilado corriendo directamente en la GPU.
-# Luego, se captura lo que el binario imprime en pantalla para que Python pueda leerlo. 
 def callback(ch, method, properties, body):
-    tarea = json.loads(body)
-    resultado = subprocess.run(
-        ["./minero", tarea["difficulty"], tarea["data"], str(tarea["start"]), str(tarea["end"])],
-        capture_output=True, text=True
-    )
-    nonce = None
-    hash_resultado = None
-    for linea in resultado.stdout.splitlines():
-        if linea.startswith("Nonce encontrado:"):
-            nonce = int(linea.split(":")[1].strip())
-        if linea.startswith("Hash resultante:"):
-            hash_resultado = linea.split(":")[1].strip()
-    if nonce is not None:
-        channel.basic_publish(
-            exchange='', routing_key='soluciones',
-            body=json.dumps({"nonce": nonce, "hash": hash_resultado})
+    try:
+        tarea = json.loads(body)
+        print(f"Procesando rango [{tarea['start']} - {tarea['end']}]...")
+
+    
+        # 1. Delegamos el cálculo pesado al servidor central con GPU via HTTP
+        payload = {
+            "difficulty": tarea["difficulty"],
+            "data": tarea["data"],
+            "start": tarea["start"],
+            "end": tarea["end"]
+        }
+        response = requests.post(GPU_SERVER_URL, json=payload, timeout=60)
+        response.raise_for_status()
+        stdout_data = response.json().get("stdout", "")
+
+        nonce = None
+        hash_resultado = None
+
+        # 2. Parseamos la salida que nos devolvió el servidor de GPU
+        for linea in stdout_data.splitlines():
+            if linea.startswith("Nonce encontrado:"):
+                nonce = int(linea.split(":")[1])
+            if linea.startswith("Hash resultante:"):
+                hash_resultado = linea.split(":")[1].strip()
+
+        # 3. CRUCIAL: Solo publicamos si este worker REALMENTE encontró el nonce ganador
+        if nonce is not None:
+            print(f"¡CONSEGUIDO! Nonce ganador encontrado: {nonce}")
+            solucion = {
+                "nonce": nonce,
+                "hash": hash_resultado
+            }
+            ch.basic_publish(
+                exchange='',
+                routing_key='soluciones',
+                body=json.dumps(solucion)
+            )
+        else:
+            print(f"No se encontró solución en el rango [{tarea['start']} - {tarea['end']}]")
+        ch.basic_ack(
+                delivery_tag=method.delivery_tag
+            )
+    except Exception as e:
+
+        print(e)
+
+        ch.basic_nack(
+            delivery_tag=method.delivery_tag,
+            requeue=True
         )
 
-channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=True)
+# Escuchamos de la cola 'tareas'
+channel.basic_consume(
+    queue="tareas",
+    on_message_callback=callback,
+    auto_ack=False
+)
+print("Worker esperando tareas...")
 channel.start_consuming()
