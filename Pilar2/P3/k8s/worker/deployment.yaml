@@ -22,11 +22,19 @@ spec:
     spec:
 
       containers:
-
       - name: worker
-
         image: ianott/blockchain-worker3:latest
 
+        command:
+        - python3
+        - worker.py
+
         resources:
+
+          requests:
+            cpu: 50m
+            memory: 64Mi
+
           limits:
-            nvidia.com/gpu: 1
+            cpu: 100m
+            memory: 128Mi

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-miner-engine
+spec:
+  replicas: 1 # Al ser 1 sola réplica, Kubernetes le asignará la RTX 4060 sin problemas
+  selector:
+    matchLabels:
+      app: gpu-engine
+  template:
+    metadata:
+      labels:
+        app: gpu-engine
+    spec:
+      containers:
+      - name: engine
+        # Usas tu misma imagen porque adentro ya tiene el binario "./minero" compilado con CUDA
+        image: ianott/blockchain-worker:latest
+        # Sobrescribimos el comando para que este Pod levante la API de la GPU en vez del worker
+        command: ["uvicorn", "gpu-server:app", "--host", "0.0.0.0", "--port", "8000"]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+            nvidia.com/gpu: 1
+
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            nvidia.com/gpu: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-service-internal
+spec:
+  selector:
+    app: gpu-engine
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
