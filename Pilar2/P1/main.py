@@ -46,14 +46,13 @@ blockchain.append(genesis)
 
 @app.post("/mine")
 def mine(req: MineRequest):
-
     result = subprocess.run(
         [
             "./minero",
-            req.difficulty,
-            req.data,
-            str(req.start),
-            str(req.end)
+            req.data,         
+            req.difficulty,   
+            str(req.start),   
+            str(req.end)      
         ],
         capture_output=True,
         text=True
