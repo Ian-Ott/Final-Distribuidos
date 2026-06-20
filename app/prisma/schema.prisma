@@ -36,6 +36,25 @@ model Event {
   status       String   @default("DRAFT")
   createdAt    DateTime @default(now())
 
+  tickets Ticket[]
+
   @@index([organizerId])
   @@index([status])
+}
+
+// Espejo local del estado on-chain. Cuando el NCT real esté listo,
+// esta tabla pasa a ser un cache/index de lo que vive en la blockchain.
+// Hoy es la fuente de verdad porque corremos contra el mock.
+model Ticket {
+  id              String   @id @default(cuid())
+  eventId         String
+  event           Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketNumber    Int      // 1..ticketCount dentro del evento
+  ownerPublicKey  String   // pubkey del dueño actual
+  mintedAt        DateTime @default(now())
+  lastTransferAt  DateTime @default(now())
+
+  @@unique([eventId, ticketNumber])
+  @@index([ownerPublicKey])
+  @@index([eventId])
 }
