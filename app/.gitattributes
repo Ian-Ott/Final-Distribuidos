@@ -1,0 +1,23 @@
+# Defaults: dejar que git detecte y normalice texto.
+* text=auto eol=lf
+
+# Forzar LF para todo lo que tiene que correr en Linux (containers, CI),
+# independiente del SO de quien hizo el clone.
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile  text eol=lf
+*.Dockerfile text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+docker-compose*.yml text eol=lf
+entrypoint* text eol=lf
+
+# Binarios — no normalizar.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary
+*.db        binary
