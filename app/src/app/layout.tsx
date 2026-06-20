@@ -79,6 +79,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   Panel
                 </Link>
               )}
+              {user && (
+                <Link
+                  href="/my-tickets"
+                  className="inline-flex items-center h-8 sm:h-9 px-2.5 sm:px-3 rounded-full text-[var(--ink-2)] hover:bg-[var(--surface)] transition-colors"
+                >
+                  Mis pases
+                </Link>
+              )}
               <ThemeToggle />
               <HeaderActions user={user} />
             </nav>
