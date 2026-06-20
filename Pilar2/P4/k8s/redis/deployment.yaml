@@ -6,7 +6,8 @@ metadata:
 
 spec:
   replicas: 1
-
+  strategy:
+    type: Recreate # ESTO MATA EL POD VIEJO ANTES DE CREAR EL NUEVO
   selector:
     matchLabels:
       app: redis
@@ -19,6 +20,15 @@ spec:
         app: redis
 
     spec:
+      affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values:
+                  - knode10 # <--- EVITA EL NODO CON EL VOLUMEN TRABADO
 
       containers:
 
