@@ -2,16 +2,36 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { PaseMockup } from "@/components/pase-mockup";
+import { getSession } from "@/lib/session";
+import { BuyButton } from "./buy-button";
 
 export const dynamic = "force-dynamic";
 
 export default async function EventDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const event = await prisma.event.findUnique({ where: { id } });
+  const event = await prisma.event.findUnique({
+    where: { id },
+    include: { organizer: { select: { publicKey: true } } },
+  });
   if (!event) notFound();
 
+  const session = await getSession();
   const date = new Date(event.datetime);
   const isEmitted = event.status === "EMITTED";
+
+  // Calcular si quedan entradas disponibles (las que siguen siendo del organizador).
+  const available = isEmitted
+    ? await prisma.ticket.count({
+        where: { eventId: event.id, ownerPublicKey: event.organizer.publicKey },
+      })
+    : 0;
+
+  let buyDisabledReason: string | null = null;
+  if (!isEmitted) buyDisabledReason = "Aún no fue emitido a la blockchain";
+  else if (!session.userId) buyDisabledReason = "Iniciá sesión para comprar";
+  else if (session.publicKey === event.organizer.publicKey)
+    buyDisabledReason = "Sos el organizador de este evento";
+  else if (available === 0) buyDisabledReason = "Agotado";
 
   return (
     <div className="mx-auto max-w-6xl w-full px-4 sm:px-6 py-10 sm:py-14">
@@ -107,16 +127,16 @@ export default async function EventDetail({ params }: { params: Promise<{ id: st
                 ${event.price.toFixed(2)}
               </p>
             </div>
-            <button
-              disabled
-              className="btn btn-primary w-full btn-lg cursor-not-allowed opacity-60"
-              title="Disponible en próxima iteración"
-            >
-              Comprar pase
-            </button>
-            <p className="text-[12px] text-[var(--muted)] text-center mt-2">
-              Disponible en próxima iteración
-            </p>
+            <BuyButton
+              eventId={event.id}
+              disabled={buyDisabledReason !== null}
+              reason={buyDisabledReason ?? undefined}
+            />
+            {isEmitted && buyDisabledReason === null && (
+              <p className="text-[11px] text-[var(--muted)] text-center mt-2">
+                {available} {available === 1 ? "entrada disponible" : "entradas disponibles"}
+              </p>
+            )}
           </div>
 
           <div className="card p-5 sm:p-6 space-y-3">

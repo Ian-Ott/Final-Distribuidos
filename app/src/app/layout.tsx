@@ -72,12 +72,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 Eventos
               </Link>
               {user?.role === "ORGANIZER" && (
-                <Link
-                  href="/dashboard"
-                  className="inline-flex items-center h-8 sm:h-9 px-2.5 sm:px-3 rounded-full text-[var(--ink-2)] hover:bg-[var(--surface)] transition-colors"
-                >
-                  Panel
-                </Link>
+                <>
+                  <Link
+                    href="/dashboard"
+                    className="inline-flex items-center h-8 sm:h-9 px-2.5 sm:px-3 rounded-full text-[var(--ink-2)] hover:bg-[var(--surface)] transition-colors"
+                  >
+                    Panel
+                  </Link>
+                  <Link
+                    href="/scan"
+                    className="inline-flex items-center h-8 sm:h-9 px-2.5 sm:px-3 rounded-full text-[var(--ink-2)] hover:bg-[var(--surface)] transition-colors"
+                  >
+                    Validar
+                  </Link>
+                </>
               )}
               {user && (
                 <Link
