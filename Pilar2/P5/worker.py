@@ -2,13 +2,20 @@ import pika
 import json
 import requests
 import os
+import time
 
-# URL del contenedor central que tiene la RTX 4060 asignada
+
 GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/mine")
 
-# Conexión a RabbitMQ
-connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
-channel = connection.channel()
+print("Conectando a rabbitmq")
+while True:
+    try:
+        connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+        channel = connection.channel()
+        break
+    except pika.exceptions.AMQPConnectionError:
+        print("RabbitMQ no está listo todavía. Reintentando en 3 segundos...")
+        time.sleep(3)
 
 # Declaramos las mismas colas
 channel.queue_declare(queue='tareas')
