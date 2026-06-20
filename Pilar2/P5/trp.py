@@ -49,7 +49,7 @@ except Exception:
 apps_v1 = client.AppsV1Api()
 
 CPU_DEPLOYMENT = "miners-cpu"
-CPU_NAMESPACE  = "default"
+CPU_NAMESPACE = "g-abc"
 
 # Funcion para escalar pods desde codigo, es equivalente a kubectl scale deployment miners-cpu --replicas=4,
 # por eso necesitaba el rbac.yaml, sin esos permisos K8s rechazaría esta llamada.
@@ -71,9 +71,8 @@ FALLBACK_DIFFICULTY = "0"    # dificultad reducida para CPU
 ORIGINAL_DIFFICULTY_KEY = "difficulty_original"
 
 # Contamos los workers GPU activos
-def count_active_gpus() -> int:
-    keys = r.keys("heartbeat:*")
-    return sum(1 for k in keys if r.get(k) == "gpu")
+def is_gpu_server_alive() -> bool:
+    return r.exists("heartbeat:gpu-server") == 1
 
 
 # Esta funcion corre en background. Cada 15s revisa si hay GPU vivos.
@@ -83,30 +82,26 @@ def monitor_loop():
     in_fallback = False
 
     while True:
-        gpu_count = count_active_gpus()
+        gpu_alive = is_gpu_server_alive()
 
-        if gpu_count == 0 and not in_fallback:
-            print("[TrP] Sin GPU detectados — activando fallback CPU")
+        if not gpu_alive and not in_fallback:
+            print("[TrP] gpu-server no responde — activando fallback CPU")
 
-            # Guardar dificultad original y reducirla
             original = r.get("difficulty")
             if original:
                 r.set(ORIGINAL_DIFFICULTY_KEY, original)
             r.set("difficulty", FALLBACK_DIFFICULTY)
 
-            # Escalar CPU miners
             set_cpu_replicas(4)
             in_fallback = True
 
-        elif gpu_count > 0 and in_fallback:
-            print(f"[TrP] {gpu_count} GPU detectados — restaurando modo GPU")
+        elif gpu_alive and in_fallback:
+            print("[TrP] gpu-server activo de nuevo — restaurando modo GPU")
 
-            # Restaurar dificultad
             original = r.get(ORIGINAL_DIFFICULTY_KEY)
             if original:
                 r.set("difficulty", original)
 
-            # Bajar CPU miners
             set_cpu_replicas(0)
             in_fallback = False
 

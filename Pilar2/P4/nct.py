@@ -5,7 +5,6 @@ import json
 import time
 import redis
 import hashlib
-import time
 
 # -------------------------
 # CONEXIONES
@@ -28,7 +27,13 @@ app = FastAPI()
 def connect_rabbitmq():
     while True:
         try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+            connection = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    "rabbitmq",
+                    heartbeat=30,
+                    blocked_connection_timeout=300
+                )
+            )
             return connection
         except Exception:
             print("Esperando RabbitMQ...")
@@ -38,6 +43,47 @@ connection = connect_rabbitmq()
 channel = connection.channel()
 channel.queue_declare(queue='tareas')
 channel.queue_declare(queue='soluciones')
+
+def ensure_connection():
+    """Verifica que la conexión y el canal sigan vivos; si no, reconecta."""
+    global connection, channel
+    try:
+        if connection.is_closed or channel.is_closed:
+            raise Exception("conexion cerrada")
+        # Procesa eventos pendientes (heartbeats) para detectar cortes a tiempo
+        connection.process_data_events(time_limit=0)
+    except Exception:
+        print("Conexión a RabbitMQ perdida, reconectando...")
+        try:
+            connection.close()
+        except Exception:
+            pass
+        connection = connect_rabbitmq()
+        channel = connection.channel()
+        channel.queue_declare(queue='tareas')
+        channel.queue_declare(queue='soluciones')
+
+def safe_basic_get(queue: str):
+    """basic_get con reconexión automática si la conexión se cayó."""
+    global channel
+    ensure_connection()
+    try:
+        return channel.basic_get(queue=queue, auto_ack=True)
+    except Exception as e:
+        print(f"Error en basic_get, reconectando: {e}")
+        ensure_connection()
+        return channel.basic_get(queue=queue, auto_ack=True)
+
+def safe_basic_publish(routing_key: str, body: str):
+    """basic_publish con reconexión automática si la conexión se cayó."""
+    global channel
+    ensure_connection()
+    try:
+        channel.basic_publish(exchange='', routing_key=routing_key, body=body)
+    except Exception as e:
+        print(f"Error en basic_publish, reconectando: {e}")
+        ensure_connection()
+        channel.basic_publish(exchange='', routing_key=routing_key, body=body)
 
 # -------------------------
 # CONFIGURACION DINAMICA
@@ -148,10 +194,29 @@ def transaction(tx: Transaction):
 @app.post("/create-block")
 def create_block():
     """
-    NCT.1 — Publica tareas de minería en RabbitMQ.
-    NCT.2 — Espera que un worker encuentre la solución.
-    NCT.3 — Verifica la solución antes de aceptarla.
-    NCT.4 — Almacena el bloque en Redis.
+    Orquesta la creación de un nuevo bloque en la blockchain.
+
+    1. Adquiere un lock en Redis ("minando") para evitar que las 2 réplicas
+       del NCT creen bloques simultáneamente y rompan la cadena.
+
+    2. Arma el bloque con las transacciones pendientes y el hash del bloque
+       anterior, pero SIN nonce — ese es el desafío que van a resolver los workers.
+
+    3. Publica un mensaje en [tareas] por cada worker, dividiendo el rango
+       total de nonces entre los WORKERS configurados.
+
+    4. Espera bloqueado hasta que algún worker publique una solución en [soluciones].
+       Antes de cada lectura/escritura a RabbitMQ se verifica la conexión
+       (ensure_connection) para reconectar automáticamente si el canal se cayó
+       por inactividad prolongada durante la espera.
+
+    5. Verifica que el hash recibido sea válido y cumpla la dificultad actual.
+
+    6. Guarda el bloque en Redis de dos formas:
+       - En la lista "blockchain" para recorrer la cadena en orden.
+       - Como hash "block:N" para acceso directo por índice.
+
+    7. Libera el lock en el bloque finally, pase lo que pase.
     """
     if r.exists("minando"):
         return {"error": "ya se esta minando un bloque"}
@@ -178,7 +243,10 @@ def create_block():
 
         # Limpiar soluciones viejas
         while True:
-            _, _, body = channel.basic_get(queue='soluciones', auto_ack=True)
+            result = safe_basic_get('soluciones')
+            if result is None:
+                break
+            _, _, body = result
             if body is None:
                 break
 
@@ -193,11 +261,7 @@ def create_block():
                 "start":      inicio,
                 "end":        fin
             }
-            channel.basic_publish(
-                exchange='',
-                routing_key='tareas',
-                body=json.dumps(tarea)
-            )
+            safe_basic_publish('tareas', json.dumps(tarea))
 
         r.rpush("logs", json.dumps({
             "timestamp": time.time(),
@@ -209,7 +273,9 @@ def create_block():
         # NCT.2 — Esperar solución
         body = None
         while body is None:
-            _, _, body = channel.basic_get(queue='soluciones', auto_ack=True)
+            result = safe_basic_get('soluciones')
+            if result is not None:
+                _, _, body = result
             if body is None:
                 time.sleep(0.5)
 

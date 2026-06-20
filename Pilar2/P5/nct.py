@@ -25,7 +25,13 @@ app = FastAPI()
 def connect_rabbitmq():
     while True:
         try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+            connection = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    "rabbitmq",
+                    heartbeat=30,
+                    blocked_connection_timeout=300
+                )
+            )
             return connection
         except Exception:
             print("Esperando RabbitMQ...")
@@ -35,6 +41,46 @@ connection = connect_rabbitmq()
 channel = connection.channel()
 channel.queue_declare(queue='tareas_pool')  # NCT → TrP
 channel.queue_declare(queue='soluciones')   # Workers → NCT
+
+def ensure_connection():
+    """Verifica que la conexión y el canal sigan vivos; si no, reconecta."""
+    global connection, channel
+    try:
+        if connection.is_closed or channel.is_closed:
+            raise Exception("conexion cerrada")
+        connection.process_data_events(time_limit=0)
+    except Exception:
+        print("Conexión a RabbitMQ perdida, reconectando...")
+        try:
+            connection.close()
+        except Exception:
+            pass
+        connection = connect_rabbitmq()
+        channel = connection.channel()
+        channel.queue_declare(queue='tareas_pool')
+        channel.queue_declare(queue='soluciones')
+
+def safe_basic_get(queue: str):
+    """basic_get con reconexión automática si la conexión se cayó."""
+    global channel
+    ensure_connection()
+    try:
+        return channel.basic_get(queue=queue, auto_ack=True)
+    except Exception as e:
+        print(f"Error en basic_get, reconectando: {e}")
+        ensure_connection()
+        return channel.basic_get(queue=queue, auto_ack=True)
+
+def safe_basic_publish(routing_key: str, body: str):
+    """basic_publish con reconexión automática si la conexión se cayó."""
+    global channel
+    ensure_connection()
+    try:
+        channel.basic_publish(exchange='', routing_key=routing_key, body=body)
+    except Exception as e:
+        print(f"Error en basic_publish, reconectando: {e}")
+        ensure_connection()
+        channel.basic_publish(exchange='', routing_key=routing_key, body=body)
 
 # -------------------------
 # CONFIGURACION
@@ -133,7 +179,8 @@ def transaction(tx: Transaction):
 # 2. Arma el bloque con las transacciones pendientes y el hash del bloque anterior, pero SIN nonce,
 # ese es el desafío que van a resolver los workers.
 # 3. Publica el bloque como tarea en [tareas_pool]. El TrP lo subdivide en chunks y los distribuye entre los workers GPU (o CPU en fallback).
-# 4. Espera bloqueado hasta que algún worker publique una solución en [soluciones].
+# 4. Espera bloqueado hasta que algún worker publique una solución en [soluciones]. Antes de cada lectura/escritura a RabbitMQ
+# se verifica la conexión (ensure_connection) para reconectar automáticamente si el canal se cayó por inactividad prolongada durante la espera.
 # 5. Verifica que el hash recibido sea válido y cumpla la dificultad actual. Lee la dificultad de Redis en este momento, no al inicio, porque el TrP
 # puede haberla reducido durante el minado si detectó que no había GPU.
 # 6. Guarda el bloque en Redis de dos formas:
@@ -168,7 +215,10 @@ def create_block():
 
         # Limpiar soluciones viejas
         while True:
-            _, _, body = channel.basic_get(queue='soluciones', auto_ack=True)
+            result = safe_basic_get('soluciones')
+            if result is None:
+                break
+            _, _, body = result
             if body is None:
                 break
 
@@ -179,11 +229,7 @@ def create_block():
             "start":      0,
             "end":        TOTAL
         }
-        channel.basic_publish(
-            exchange='',
-            routing_key='tareas_pool',
-            body=json.dumps(tarea_completa)
-        )
+        safe_basic_publish('tareas_pool', json.dumps(tarea_completa))
 
         r.rpush("logs", json.dumps({
             "timestamp":  time.time(),
@@ -194,7 +240,9 @@ def create_block():
         # Esperar solución de cualquier worker
         body = None
         while body is None:
-            _, _, body = channel.basic_get(queue='soluciones', auto_ack=True)
+            result = safe_basic_get('soluciones')
+            if result is not None:
+                _, _, body = result
             if body is None:
                 time.sleep(0.5)
 
