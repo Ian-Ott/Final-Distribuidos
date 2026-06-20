@@ -26,4 +26,4 @@ COPY --from=builder /build/minero_sm61 ./minero_sm61
 COPY --from=builder /build/minero_sm86 ./minero_sm86
 COPY --from=builder /build/minero_sm89 ./minero_sm89
 
-CMD ["uvicorn","main:app","--host","0.0.0.0","--port","8000"]
+CMD ["python3","worker.py"]
