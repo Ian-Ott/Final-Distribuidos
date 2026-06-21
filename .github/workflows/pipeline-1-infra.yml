@@ -40,6 +40,10 @@ jobs:
             google_artifact_registry_repository.docker \
             "projects/${{ secrets.GCP_PROJECT_ID }}/locations/us-central1/repositories/sdypp" \
             || true
+          tofu import -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            google_container_node_pool.infra \
+            "projects/${{ secrets.GCP_PROJECT_ID }}/locations/us-central1-a/clusters/sdypp-cluster/nodePools/infra" \
+            || true
 
       - name: Plan
         run: tofu plan -var="project_id=${{ secrets.GCP_PROJECT_ID }}" -out=plan.tfplan
