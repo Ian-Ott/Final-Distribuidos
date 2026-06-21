@@ -29,7 +29,7 @@ resource "google_container_node_pool" "infra" {
   node_count = 1
 
   node_config {
-    machine_type = "e2-small"
+    machine_type = "e2-medium"
     spot         = true
 
     labels = {
