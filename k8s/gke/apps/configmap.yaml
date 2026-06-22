@@ -10,8 +10,10 @@ data:
   DATABASE_URL: "postgres://entradas:entradas@postgres:5432/entradas"
   NODE_ENV: "production"
 
-  # NCT real (extendido — ver ADR-018 en app/docs/adr/018-contrato-nct-ownership.md)
-  NCT_URL: "http://blockchain-nct:8000"
+  # NCT real (extendido — ver ADR-018 en app/docs/adr/018-contrato-nct-ownership.md).
+  # El Service nct expone port 80 → targetPort 8000 del pod, así que la URL
+  # no lleva puerto explícito (HTTP default 80).
+  NCT_URL: "http://blockchain-nct"
   # Las vars NCT_MOCK_* solo aplican cuando NCT_URL=mock (dev local).
 
   # MercadoPago — el access token vive en el Secret app-secrets.
