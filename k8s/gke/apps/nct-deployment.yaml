@@ -17,7 +17,7 @@ spec:
         pool: apps
       containers:
         - name: nct
-          image: us-central1-docker.pkg.dev/tp-final-sdypp/sdypp/blockchain-nct:latest
+          image: IMAGE_TAG
           ports:
             - containerPort: 8000
           resources:

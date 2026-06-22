@@ -71,6 +71,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               >
                 Eventos
               </Link>
+              <Link
+                href="/panel"
+                className="inline-flex items-center h-8 sm:h-9 px-2.5 sm:px-3 rounded-full text-[var(--ink-2)] hover:bg-[var(--surface)] transition-colors"
+              >
+                Blockchain
+              </Link>
               {user?.role === "ORGANIZER" && (
                 <>
                   <Link
