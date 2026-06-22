@@ -4,11 +4,19 @@ import time
 import redis
 import threading
 import math
-import urllib.request
-import ssl
+import logging
 
 # TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers. 
 # El NCT dice "minà este bloque", y el TrP se encarga de dividir ese trabajo, distribuirlo, y decidir si hay que cambiar de modo GPU a CPU.
+
+# -------------------------
+# LOGGING
+# -------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("trp")
 
 # -------------------------
 # CONEXIONES
@@ -19,16 +27,20 @@ def connect_redis():
         try:
             r = redis.Redis(host="redis", port=6379, decode_responses=True)
             r.ping()
+            log.info("Conectado a Redis")
             return r
         except Exception:
+            log.warning("Esperando Redis...")
             time.sleep(3)
 
 def connect_rabbitmq():
     while True:
         try:
             conn = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+            log.info("Conectado a RabbitMQ")
             return conn
         except Exception:
+            log.warning("Esperando RabbitMQ...")
             time.sleep(3)
 
 r = connect_redis()
@@ -87,25 +99,53 @@ def monitor_loop():
         gpu_alive = is_gpu_server_alive()
 
         if not gpu_alive and not in_fallback:
-            print("[TrP] gpu-server no responde — activando fallback CPU")
+            log.warning("gpu-server no responde — activando fallback CPU")
 
             original = r.get("difficulty")
             if original:
                 r.set(ORIGINAL_DIFFICULTY_KEY, original)
             r.set("difficulty", FALLBACK_DIFFICULTY)
 
-            scale_cpu_workers(CPU_WORKER_REPLICAS)
+            # Dejamos constancia del cambio en el historial compartido (Redis
+            # "logs", el mismo que expone GET /logs en el NCT). Antes esta
+            # transición solo se veía con un print en la consola del pod TrP;
+            # ahora también queda visible desde afuera sin tener que mirar
+            # kubectl logs del TrP puntualmente.
+            r.rpush("logs", json.dumps({
+                "timestamp": time.time(),
+                "event": "fallback_cpu_activado",
+                "difficulty_anterior": original,
+                "difficulty_nueva": FALLBACK_DIFFICULTY,
+            }))
+
+            # TODO (integración GCP): iniciar instancias CPU en la nube.
+            # Ej: disparar un Cloud Run Job vía la API de Google Cloud
+            # (google-cloud-run client) para que arranque N ejecuciones
+            # de worker_cpu.py. Cada ejecución consume de [tareas] igual
+            # que un worker normal, no necesita más coordinación desde acá.
+            # start_cpu_instances(n=4)
 
             in_fallback = True
 
         elif gpu_alive and in_fallback:
-            print("[TrP] gpu-server activo de nuevo — restaurando modo GPU")
+            log.info("gpu-server activo de nuevo — restaurando modo GPU")
 
             original = r.get(ORIGINAL_DIFFICULTY_KEY)
             if original:
                 r.set("difficulty", original)
 
-            scale_cpu_workers(0)
+            r.rpush("logs", json.dumps({
+                "timestamp": time.time(),
+                "event": "fallback_cpu_restaurado",
+                "difficulty_restaurada": original,
+            }))
+
+            # TODO (integración GCP): destruir/dejar de lanzar instancias CPU.
+            # Con Cloud Run Jobs no haría falta "apagar" nada explícitamente
+            # (cada ejecución termina sola), simplemente se deja de disparar
+            # nuevas ejecuciones. Si se usa otro mecanismo (VMs, etc.) acá
+            # iría la destrucción explícita de esos recursos.
+            # stop_cpu_instances()
 
             in_fallback = False
 
@@ -133,7 +173,7 @@ def subdivide_and_publish(tarea: dict):
     total_range = end - start
     n_chunks    = math.ceil(total_range / CHUNK_SIZE)
 
-    print(f"[TrP] Subdiviendo tarea en {n_chunks} chunks (dificultad: {difficulty})")
+    log.info(f"Subdividiendo tarea en {n_chunks} chunks (dificultad: {difficulty})")
 
     for i in range(n_chunks):
         chunk_start = start + i * CHUNK_SIZE
@@ -168,5 +208,5 @@ def on_task(ch, method, properties, body):
     subdivide_and_publish(tarea)
 
 channel.basic_consume(queue='tareas_pool', on_message_callback=on_task, auto_ack=True)
-print("[TrP] Esperando tareas del NCT...")
+log.info("Esperando tareas del NCT...")
 channel.start_consuming()
