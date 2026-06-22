@@ -17,7 +17,7 @@ spec:
         pool: apps
       containers:
         - name: frontend
-          image: IMAGE_TAG
+          image: us-central1-docker.pkg.dev/tp-final-sdypp/sdypp/frontend:latest
           ports:
             - containerPort: 3000
           envFrom:
@@ -25,11 +25,11 @@ spec:
                 name: app-config
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 300m
+              memory: 384Mi
           livenessProbe:
             httpGet:
               path: /api/health

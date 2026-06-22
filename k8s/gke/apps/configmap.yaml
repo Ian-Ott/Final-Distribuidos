@@ -7,6 +7,6 @@ data:
   RABBITMQ_HOST: "rabbitmq"
   REDIS_HOST: "redis"
   DATABASE_URL: "postgres://entradas:entradas@postgres:5432/entradas"
-  NCT_URL: "http://blockchain-nct:8000"
+  NCT_URL: "http://blockchain-nct"
   SESSION_PASSWORD: "change-me-in-production-at-least-32-chars!"
   NODE_ENV: "production"

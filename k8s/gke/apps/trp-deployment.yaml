@@ -17,10 +17,10 @@ spec:
         pool: apps
       containers:
         - name: trp
-          image: IMAGE_TAG
+          image: us-central1-docker.pkg.dev/tp-final-sdypp/sdypp/blockchain-trp:latest
           resources:
             requests:
-              cpu: 50m
+              cpu: 25m
               memory: 64Mi
             limits:
               cpu: 200m

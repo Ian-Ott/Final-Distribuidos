@@ -17,15 +17,15 @@ spec:
         pool: apps
       containers:
         - name: nct
-          image: IMAGE_TAG
+          image: us-central1-docker.pkg.dev/tp-final-sdypp/sdypp/blockchain-nct:latest
           ports:
             - containerPort: 8000
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 50m
+              memory: 64Mi
             limits:
-              cpu: 250m
+              cpu: 200m
               memory: 256Mi
           livenessProbe:
             httpGet:

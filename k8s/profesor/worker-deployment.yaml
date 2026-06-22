@@ -18,9 +18,9 @@ spec:
           command: ["python3", "worker.py"]
           env:
             - name: RABBITMQ_HOST
-              value: "RABBITMQ_EXTERNAL_IP"
+              value: "34.46.108.71"
             - name: REDIS_HOST
-              value: "REDIS_EXTERNAL_IP"
+              value: "35.224.56.210"
             - name: GPU_SERVER_URL
               value: "http://blockchain-gpu-server:8000"
           resources:
