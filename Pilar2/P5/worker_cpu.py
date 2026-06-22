@@ -5,10 +5,20 @@ import redis
 import uuid
 import threading
 import hashlib
+import logging
 
-# Este archivo es un minero de GPU.
+# Este archivo es un minero de GPU... digo, de CPU.
 # Su único trabajo es recibir un desafío matemático, resolverlo por fuerza bruta, y reportar la solución.
 # No sabe nada de bloques, transacciones ni blockchain — solo mina
+
+# -------------------------
+# LOGGING
+# -------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("worker-cpu")
 
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
@@ -18,9 +28,10 @@ def connect_rabbitmq():
     while True:
         try:
             connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+            log.info("Conectado a RabbitMQ")
             return connection
         except Exception:
-            print("Esperando RabbitMQ...")
+            log.warning("Esperando RabbitMQ...")
             time.sleep(3)
 
 # Retry loop para conectarse a redis
@@ -29,8 +40,10 @@ def connect_redis():
         try:
             r = redis.Redis(host="redis", port=6379, decode_responses=True)
             r.ping()
+            log.info("Conectado a Redis")
             return r
         except Exception:
+            log.warning("Esperando Redis...")
             time.sleep(3)
 
 r = connect_redis()
@@ -40,6 +53,15 @@ connection = connect_rabbitmq()
 channel = connection.channel()
 channel.queue_declare(queue='tareas') 
 channel.queue_declare(queue='soluciones')
+
+
+def log_event(event: str, **fields):
+    """Mismo patrón de log centralizado que usan NCT y TrP: escribe en la
+    clave 'logs' de Redis (visible vía GET /logs) y también en consola."""
+    entry = {"timestamp": time.time(), "event": event, "worker_id": WORKER_ID, "tipo": "cpu", **fields}
+    r.rpush("logs", json.dumps(entry))
+    log.info(f"event={event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
+
 
 # Keep-alive, se identifica como CPU en redis. El TTL es clave: si el worker muere o se desconecta,
 # después de 30 segundos esa clave desaparece sola de Redis.
@@ -75,6 +97,8 @@ def mine_cpu(data: str, difficulty: str, start: int, end: int):
 def callback(ch, method, properties, body):
     tarea = json.loads(body)
 
+    log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
+
     nonce, hash_resultado = mine_cpu(
         tarea["data"],
         tarea["difficulty"],
@@ -88,10 +112,15 @@ def callback(ch, method, properties, body):
             routing_key='soluciones',
             body=json.dumps({"nonce": nonce, "hash": hash_resultado})
         )
-        print(f"[CPU Worker {WORKER_ID}] Nonce encontrado: {nonce}")
+        log.info(f"[{WORKER_ID}] Nonce encontrado: {nonce}")
+        log_event(
+            "solucion_encontrada",
+            nonce=nonce, hash=hash_resultado,
+            start=tarea["start"], end=tarea["end"],
+        )
     else:
-        print(f"[CPU Worker {WORKER_ID}] Sin solución en rango {tarea['start']}-{tarea['end']}")
+        log.info(f"[{WORKER_ID}] Sin solución en rango {tarea['start']}-{tarea['end']}")
 
 channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=True)
-print(f"[CPU Worker {WORKER_ID}] Esperando tareas...")
+log.info(f"[{WORKER_ID}] Worker CPU esperando tareas...")
 channel.start_consuming()
