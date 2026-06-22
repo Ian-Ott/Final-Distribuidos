@@ -4,6 +4,7 @@ import subprocess
 import redis
 import time
 import threading
+import os
 
 app = FastAPI()
 
@@ -14,7 +15,7 @@ app = FastAPI()
 def connect_redis():
     while True:
         try:
-            r = redis.Redis(host="redis", port=6379, decode_responses=True)
+            r = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, decode_responses=True)
             r.ping()
             return r
         except Exception:

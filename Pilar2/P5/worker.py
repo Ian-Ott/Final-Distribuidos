@@ -10,7 +10,7 @@ GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/
 print("Conectando a rabbitmq")
 while True:
     try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
+        connection = pika.BlockingConnection(pika.ConnectionParameters(os.getenv("RABBITMQ_HOST", "rabbitmq")))
         channel = connection.channel()
         break
     except pika.exceptions.AMQPConnectionError:
