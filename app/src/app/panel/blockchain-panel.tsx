@@ -7,7 +7,7 @@ import { EventLog } from "./event-log";
 
 interface PanelData {
   status: { difficulty: string; total_bloques: number; pending_tx: number; minando: boolean } | null;
-  blockchain: { chain: unknown[] } | null;
+  blockchain: unknown[] | null;
   logs: unknown[] | null;
   timestamp: string;
 }
@@ -64,7 +64,7 @@ export function BlockchainPanel() {
 
       <StatusCards status={data?.status ?? null} />
 
-      <BlockExplorer blocks={(data?.blockchain?.chain as never[]) ?? null} />
+      <BlockExplorer blocks={(data?.blockchain as never[]) ?? null} />
 
       <EventLog logs={(data?.logs as never[]) ?? null} />
 
