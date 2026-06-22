@@ -4,9 +4,16 @@ metadata:
   name: app-config
   namespace: sdypp
 data:
+  # Infra compartida
   RABBITMQ_HOST: "rabbitmq"
   REDIS_HOST: "redis"
   DATABASE_URL: "postgres://entradas:entradas@postgres:5432/entradas"
-  NCT_URL: "http://blockchain-nct"
-  SESSION_PASSWORD: "change-me-in-production-at-least-32-chars!"
   NODE_ENV: "production"
+
+  # NCT real (extendido — ver ADR-018 en app/docs/adr/018-contrato-nct-ownership.md)
+  NCT_URL: "http://blockchain-nct:8000"
+  # Las vars NCT_MOCK_* solo aplican cuando NCT_URL=mock (dev local).
+
+  # MercadoPago — el access token vive en el Secret app-secrets.
+  # En prod cambiar a https://tesera.tech.
+  MP_PUBLIC_URL: "https://tesera.tech"

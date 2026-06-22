@@ -29,6 +29,7 @@ Las ADRs son cortas, inmutables (no se editan, se reemplazan), y se numeran en o
 | [015](015-reventa-entradas-validadas.md) | Reventa de entradas validadas | Accepted |
 | [016](016-integracion-mercadopago.md) | Integración con MercadoPago (Checkout Pro) | Accepted |
 | [017](017-reventa-p2p.md) | Reventa peer-to-peer entre asistentes (mock) | Accepted |
+| [018](018-contrato-nct-ownership.md) | Contrato extendido del NCT (ownership de tickets + firma) | Accepted |
 
 ## Cómo escribir una nueva
 

@@ -16,7 +16,7 @@ export interface MintBatchInput {
 export type OpStatus = "PENDING" | "CONFIRMED" | "FAILED";
 
 export interface OperationResult {
-  opRef: string; // id de la operación (devuelto al cliente para tracking)
+  opRef: string;
   status: OpStatus;
   acceptedAt: string;
   estimatedConfirmAt?: string;
@@ -63,8 +63,22 @@ function mockShouldFail(): boolean {
   return Math.random() < rate;
 }
 
+function nctUrl(path: string): string {
+  return `${NCT_URL!.replace(/\/$/, "")}${path}`;
+}
+
 // ============================================================================
-// Submit: crean operación PENDING en el mock, o llaman al NCT real.
+// IDs de ticket: en modo real son "{eventId}:{n}" para alinear con el NCT.
+// En mock dejamos que Prisma genere cuids — son opacos al consumidor.
+// ============================================================================
+
+function nctTicketId(eventId: string, ticketNumber: number): string {
+  return `${eventId}:${ticketNumber}`;
+}
+
+// ============================================================================
+// Submit: en mock crean NctOperation PENDING local. En real hablan al NCT
+// y guardan el op_id que devuelve para poder polear.
 // ============================================================================
 
 export async function submitMintBatch(input: MintBatchInput): Promise<OperationResult> {
@@ -92,26 +106,47 @@ export async function submitMintBatch(input: MintBatchInput): Promise<OperationR
     };
   }
 
-  const res = await fetch(`${NCT_URL!.replace(/\/$/, "")}/transactions/mint`, {
+  // Modo real: POST /tx/mint al NCT.
+  const res = await fetch(nctUrl("/tx/mint"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      event_id: input.eventId,
+      organizer_pubkey: input.organizerPublicKey,
+      ticket_count: input.ticketCount,
+      signed_payload: input.signedPayload,
+      signature: input.signature,
+    }),
   });
-  if (!res.ok) throw new Error(`NCT mint failed: ${res.status}`);
-  const body = (await res.json()) as { opRef?: string; batchRef?: string; status?: OpStatus; acceptedAt?: string };
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`NCT mint failed: ${res.status} ${body}`);
+  }
+  const body = (await res.json()) as { op_id: string; status: OpStatus };
+
+  // Guardamos el op en nuestra DB para poder polear y materializar localmente.
+  const op = await prisma.nctOperation.create({
+    data: {
+      id: body.op_id,
+      type: "mint_batch",
+      status: "PENDING",
+      eventId: input.eventId,
+      organizerPublicKey: input.organizerPublicKey,
+      ticketCount: input.ticketCount,
+      scheduledConfirmAt: new Date(Date.now() + 5_000), // referencia, no usado en real
+    },
+  });
+  console.log(`[NCT real] mint event=${input.eventId} count=${input.ticketCount} op=${body.op_id}`);
   return {
-    opRef: body.opRef ?? body.batchRef ?? "unknown",
-    status: body.status ?? "PENDING",
-    acceptedAt: body.acceptedAt ?? new Date().toISOString(),
+    opRef: op.id,
+    status: body.status,
+    acceptedAt: op.createdAt.toISOString(),
     mock: false,
   };
 }
 
 export async function submitTransfer(input: TransferInput): Promise<OperationResult> {
   if (isMockMode()) {
-    // Validación adelantada: el dueño actual debe coincidir (rechazo síncrono
-    // antes de crear la op pending). Esto es lo que la BC real haría al recibir
-    // la tx antes de minarla.
     const ticket = await prisma.ticket.findUnique({ where: { id: input.ticketId } });
     if (!ticket) throw new Error("ticket_not_found");
     if (ticket.ownerPublicKey !== input.fromPublicKey) {
@@ -141,47 +176,162 @@ export async function submitTransfer(input: TransferInput): Promise<OperationRes
     };
   }
 
-  const res = await fetch(`${NCT_URL!.replace(/\/$/, "")}/transactions/transfer`, {
+  // Modo real: POST /tx/transfer.
+  // En real, el ticketId que le mandamos al NCT es el mismo string que vive
+  // en nuestra DB — ya lo materializamos con formato "{eventId}:{n}".
+  const ticket = await prisma.ticket.findUnique({ where: { id: input.ticketId } });
+  if (!ticket) throw new Error("ticket_not_found");
+
+  const res = await fetch(nctUrl("/tx/transfer"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      event_id: ticket.eventId,
+      ticket_id: input.ticketId,
+      from_pubkey: input.fromPublicKey,
+      to_pubkey: input.toPublicKey,
+      reason: input.reason,
+      signed_payload: input.signedPayload,
+      signature: input.signature,
+    }),
   });
-  if (!res.ok) throw new Error(`NCT transfer failed: ${res.status}`);
-  const body = (await res.json()) as { opRef?: string; txRef?: string; status?: OpStatus; acceptedAt?: string };
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`NCT transfer failed: ${res.status} ${body}`);
+  }
+  const body = (await res.json()) as { op_id: string; status: OpStatus };
+
+  const op = await prisma.nctOperation.create({
+    data: {
+      id: body.op_id,
+      type: "transfer",
+      status: "PENDING",
+      ticketId: input.ticketId,
+      fromPublicKey: input.fromPublicKey,
+      toPublicKey: input.toPublicKey,
+      reason: input.reason,
+      scheduledConfirmAt: new Date(Date.now() + 5_000),
+    },
+  });
+  console.log(`[NCT real] transfer ticket=${input.ticketId} reason=${input.reason} op=${body.op_id}`);
   return {
-    opRef: body.opRef ?? body.txRef ?? "unknown",
-    status: body.status ?? "PENDING",
-    acceptedAt: body.acceptedAt ?? new Date().toISOString(),
+    opRef: op.id,
+    status: body.status,
+    acceptedAt: op.createdAt.toISOString(),
     mock: false,
   };
 }
 
 // ============================================================================
-// Settlement lazy: cada lectura llama a settleDueOperations() para procesar
-// las operaciones cuyo tiempo de "minado" ya pasó. Esto evita necesitar un
-// worker / cron separado.
+// Settlement: en mock usa scheduledConfirmAt + mockShouldFail. En real
+// poléa el NCT por cada op pending y aplica efectos localmente cuando confirma.
 // ============================================================================
 
 export async function settleDueOperations(): Promise<void> {
-  if (!isMockMode()) return;
-  const due = await prisma.nctOperation.findMany({
-    where: { status: "PENDING", scheduledConfirmAt: { lte: new Date() } },
-    orderBy: { scheduledConfirmAt: "asc" },
-    take: 50, // safety: no procesar todo de una en requests grandes
+  if (isMockMode()) {
+    const due = await prisma.nctOperation.findMany({
+      where: { status: "PENDING", scheduledConfirmAt: { lte: new Date() } },
+      orderBy: { scheduledConfirmAt: "asc" },
+      take: 50,
+    });
+    for (const op of due) {
+      await settleOneMock(op.id);
+    }
+    return;
+  }
+
+  // Real: traer todas las pending y polear al NCT.
+  const pending = await prisma.nctOperation.findMany({
+    where: { status: "PENDING" },
+    orderBy: { createdAt: "asc" },
+    take: 50,
   });
-  for (const op of due) {
-    await settleOne(op.id);
+  for (const op of pending) {
+    await settleOneReal(op.id);
   }
 }
 
-async function settleOne(opId: string): Promise<void> {
-  // Re-leemos con FOR UPDATE-style: si dos requests intentan settlear la misma
-  // op a la vez, solo una debe ganar. Lo hacemos optimista: si el update
-  // afecta 0 filas, otro la procesó primero.
+async function settleOneReal(opId: string): Promise<void> {
   const op = await prisma.nctOperation.findUnique({ where: { id: opId } });
   if (!op || op.status !== "PENDING") return;
 
-  // Lock optimista: solo procesa si sigue PENDING.
+  let info: { status: OpStatus; error_code?: string; block_index?: number; confirmed_at?: string } | null = null;
+  try {
+    const res = await fetch(nctUrl(`/ops/${opId}`));
+    if (res.status === 404) {
+      // El NCT no la conoce — lo dejamos PENDING (puede haberse perdido o aún no procesado)
+      return;
+    }
+    if (!res.ok) return;
+    info = (await res.json()) as { status: OpStatus; error_code?: string; block_index?: number; confirmed_at?: string };
+  } catch (err) {
+    console.warn(`[NCT real] poll ${opId} error:`, err);
+    return;
+  }
+
+  if (info.status === "PENDING") return;
+  if (info.status === "FAILED") {
+    await markFailed(opId, info.error_code ?? "nct_rejected");
+    return;
+  }
+
+  // CONFIRMED — aplicar efectos locales.
+  try {
+    if (op.type === "mint_batch") {
+      if (!op.eventId || !op.organizerPublicKey || !op.ticketCount) {
+        await markFailed(opId, "invalid_mint_payload");
+        return;
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.ticket.createMany({
+          data: Array.from({ length: op.ticketCount! }, (_, i) => ({
+            id: nctTicketId(op.eventId!, i + 1),
+            eventId: op.eventId!,
+            ticketNumber: i + 1,
+            ownerPublicKey: op.organizerPublicKey!,
+          })),
+        });
+        await tx.event.update({
+          where: { id: op.eventId! },
+          data: { status: "EMITTED", ncTBatchRef: op.id },
+        });
+        await tx.nctOperation.update({
+          where: { id: opId },
+          data: { status: "CONFIRMED", confirmedAt: new Date() },
+        });
+      });
+      console.log(`[NCT real] Op ${opId} CONFIRMED mint event=${op.eventId} block=${info.block_index}`);
+      return;
+    }
+    if (op.type === "transfer") {
+      const isValidation = op.reason === "validation";
+      const now = new Date();
+      await prisma.$transaction(async (tx) => {
+        await tx.ticket.update({
+          where: { id: op.ticketId! },
+          data: {
+            ownerPublicKey: op.toPublicKey!,
+            lastTransferAt: now,
+            ...(isValidation ? { validatedAt: now } : {}),
+          },
+        });
+        await tx.nctOperation.update({
+          where: { id: opId },
+          data: { status: "CONFIRMED", confirmedAt: now },
+        });
+      });
+      console.log(`[NCT real] Op ${opId} CONFIRMED transfer ticket=${op.ticketId} block=${info.block_index}${isValidation ? " (validated)" : ""}`);
+    }
+  } catch (err) {
+    console.error(`[NCT real] settle ${opId} error:`, err);
+    await markFailed(opId, "settlement_error");
+  }
+}
+
+async function settleOneMock(opId: string): Promise<void> {
+  const op = await prisma.nctOperation.findUnique({ where: { id: opId } });
+  if (!op || op.status !== "PENDING") return;
+
   const fail = mockShouldFail();
   try {
     if (fail) {
@@ -190,8 +340,6 @@ async function settleOne(opId: string): Promise<void> {
         data: { status: "FAILED", failedAt: new Date(), errorCode: "mock_random_failure" },
       });
       if (updated.count === 0) return;
-      // Si era un mint, devolver el evento a DRAFT así el organizador puede
-      // reintentarlo. Si no, queda colgado en MINTING para siempre.
       if (op.type === "mint_batch" && op.eventId) {
         await prisma.event.updateMany({
           where: { id: op.eventId, status: "MINTING" },
@@ -207,7 +355,6 @@ async function settleOne(opId: string): Promise<void> {
         await markFailed(opId, "invalid_mint_payload");
         return;
       }
-      // Materializa los tickets.
       await prisma.$transaction(async (tx) => {
         await tx.ticket.createMany({
           data: Array.from({ length: op.ticketCount! }, (_, i) => ({
@@ -234,15 +381,11 @@ async function settleOne(opId: string): Promise<void> {
         await markFailed(opId, "invalid_transfer_payload");
         return;
       }
-      // Re-chequear dueño: si entre el submit y ahora otra tx ya transfirió,
-      // este transfer falla.
       const ticket = await prisma.ticket.findUnique({ where: { id: op.ticketId } });
       if (!ticket || ticket.ownerPublicKey !== op.fromPublicKey) {
         await markFailed(opId, "not_current_owner_at_settlement");
         return;
       }
-      // Una transferencia con reason=validation deja la entrada en estado
-      // terminal: vuelve al organizador pero ya no se puede revender (ADR-015).
       const isValidation = op.reason === "validation";
       const now = new Date();
       await prisma.$transaction(async (tx) => {
@@ -291,65 +434,45 @@ export async function getOperationStatus(opId: string): Promise<{
   failedAt?: string;
   estimatedConfirmAt?: string;
 } | null> {
-  if (isMockMode()) {
-    await settleDueOperations();
-    const op = await prisma.nctOperation.findUnique({ where: { id: opId } });
-    if (!op) return null;
-    return {
-      status: op.status as OpStatus,
-      errorCode: op.errorCode ?? undefined,
-      confirmedAt: op.confirmedAt?.toISOString(),
-      failedAt: op.failedAt?.toISOString(),
-      estimatedConfirmAt: op.scheduledConfirmAt.toISOString(),
-    };
-  }
-  const res = await fetch(`${NCT_URL!.replace(/\/$/, "")}/operations/${opId}`);
-  if (!res.ok) return null;
-  return (await res.json()) as {
-    status: OpStatus;
-    errorCode?: string;
-    confirmedAt?: string;
-    failedAt?: string;
+  await settleDueOperations();
+  const op = await prisma.nctOperation.findUnique({ where: { id: opId } });
+  if (!op) return null;
+  return {
+    status: op.status as OpStatus,
+    errorCode: op.errorCode ?? undefined,
+    confirmedAt: op.confirmedAt?.toISOString(),
+    failedAt: op.failedAt?.toISOString(),
+    estimatedConfirmAt: op.scheduledConfirmAt.toISOString(),
   };
 }
 
 // ============================================================================
-// Queries read-only sobre el estado on-chain.
-// Llaman a settleDueOperations() primero para no devolver data atrasada.
+// Queries read-only: en ambos modos leemos del espejo local (tabla Ticket)
+// que se mantiene consistente via settleDueOperations.
 // ============================================================================
 
 export async function getTicketsByOwner(publicKey: string): Promise<TicketOwnership[]> {
-  if (isMockMode()) {
-    await settleDueOperations();
-    const tickets = await prisma.ticket.findMany({
-      where: { ownerPublicKey: publicKey },
-      orderBy: [{ eventId: "asc" }, { ticketNumber: "asc" }],
-    });
-    return tickets.map((t) => ({
-      ticketId: t.id,
-      eventId: t.eventId,
-      ticketNumber: t.ticketNumber,
-      ownerPublicKey: t.ownerPublicKey,
-    }));
-  }
-  throw new Error("not_implemented_for_real_nct");
+  await settleDueOperations();
+  const tickets = await prisma.ticket.findMany({
+    where: { ownerPublicKey: publicKey },
+    orderBy: [{ eventId: "asc" }, { ticketNumber: "asc" }],
+  });
+  return tickets.map((t) => ({
+    ticketId: t.id,
+    eventId: t.eventId,
+    ticketNumber: t.ticketNumber,
+    ownerPublicKey: t.ownerPublicKey,
+  }));
 }
 
 export async function getTicketOwner(ticketId: string): Promise<string | null> {
-  if (isMockMode()) {
-    await settleDueOperations();
-    const t = await prisma.ticket.findUnique({ where: { id: ticketId } });
-    return t?.ownerPublicKey ?? null;
-  }
-  throw new Error("not_implemented_for_real_nct");
+  await settleDueOperations();
+  const t = await prisma.ticket.findUnique({ where: { id: ticketId } });
+  return t?.ownerPublicKey ?? null;
 }
 
 export async function getAvailableTicketsCount(eventId: string, organizerPublicKey: string): Promise<number> {
-  if (isMockMode()) {
-    await settleDueOperations();
-  }
-  // Excluye entradas ya validadas: aunque pertenezcan al organizador, no se
-  // pueden volver a vender (ADR-015).
+  await settleDueOperations();
   return prisma.ticket.count({
     where: { eventId, ownerPublicKey: organizerPublicKey, validatedAt: null },
   });

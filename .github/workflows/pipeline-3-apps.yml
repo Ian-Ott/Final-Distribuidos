@@ -56,9 +56,18 @@ jobs:
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
       - name: Build and push
+        env:
+          # NEXT_PUBLIC_* se inlinean en build time por Next.js — solo
+          # se pasan cuando el target es el frontend.
+          CLOUDINARY_NAME: ${{ secrets.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_PRESET: ${{ secrets.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET }}
         run: |
           IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image }}"
-          docker build -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" \
+          BUILD_ARGS=""
+          if [ "${{ matrix.name }}" = "frontend" ]; then
+            BUILD_ARGS="--build-arg NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=${CLOUDINARY_NAME} --build-arg NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET=${CLOUDINARY_PRESET}"
+          fi
+          docker build $BUILD_ARGS -t "${IMAGE}:${{ github.sha }}" -t "${IMAGE}:latest" \
             -f ${{ matrix.dockerfile }} ${{ matrix.context }}
           docker push "${IMAGE}:${{ github.sha }}"
           docker push "${IMAGE}:latest"

@@ -1,0 +1,10 @@
+# Secrets de K8s — nunca commitear valores reales.
+# El shape se documenta en k8s/gke/apps/secret.example.yaml.
+k8s/gke/apps/secret.yaml
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/terraform.tfvars
+infra/.terraform.lock.hcl
