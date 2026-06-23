@@ -28,6 +28,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "cannot_buy_own_event" }, { status: 400 });
   }
 
+  // Los organizadores no pueden comprar entradas (su rol es emitir, no consumir).
+  const buyer = await prisma.user.findUnique({ where: { id: session.userId }, select: { role: true } });
+  if (buyer?.role === "ORGANIZER") {
+    return NextResponse.json({ error: "organizer_cannot_buy" }, { status: 403 });
+  }
+
   // Buscar una entrada que siga siendo del organizador (no vendida) y que
   // no haya sido validada antes (ADR-015: validada = terminal, no re-vendible).
   const available = await prisma.ticket.findFirst({

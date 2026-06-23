@@ -34,6 +34,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const user = await prisma.user.findUnique({ where: { id: buyerUserId } });
   if (!user) return NextResponse.json({ error: "user_not_found" }, { status: 404 });
 
+  // Los organizadores no pueden comprar entradas: su rol es emitir, no
+  // consumir. Permitirlo además dispara un caso con divergencia de hash en el
+  // worker que no logramos reproducir desde acá; bloquearlo en frontend cierra
+  // la UX prolijamente.
+  if (user.role === "ORGANIZER") {
+    return NextResponse.json(
+      { error: "organizer_cannot_buy", message: "Los organizadores no pueden comprar entradas." },
+      { status: 403 },
+    );
+  }
+
   const reservation = await prisma.$transaction(async (tx) => {
     const activeReservations = await tx.payment.findMany({
         where: {
