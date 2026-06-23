@@ -20,8 +20,6 @@ spec:
           env:
             - name: RABBITMQ_HOST
               value: "34.46.108.71"
-            - name: REDIS_HOST
-              value: "35.224.56.210"
           resources:
             limits:
               nvidia.com/gpu: 1
