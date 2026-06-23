@@ -212,9 +212,29 @@ def wait_for_solution(task_id: str, timeout_seconds: int):
 TOTAL = 10000000
 MINING_TIMEOUT_SECONDS = int(os.getenv("MINING_TIMEOUT_SECONDS", "180"))
 MINING_POLL_INTERVAL_SECONDS = 0.5
+MINING_LOCK_KEY = "minando"
+MINING_LOCK_TTL_SECONDS = int(os.getenv("MINING_LOCK_TTL_SECONDS", str(MINING_TIMEOUT_SECONDS + 120)))
 
 if not r.exists("difficulty"):
     r.set("difficulty", "00")
+
+def acquire_mining_lock() -> str | None:
+    token = str(uuid.uuid4())
+    acquired = r.set(MINING_LOCK_KEY, token, nx=True, ex=MINING_LOCK_TTL_SECONDS)
+    return token if acquired else None
+
+def release_mining_lock(token: str):
+    r.eval(
+        """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        end
+        return 0
+        """,
+        1,
+        MINING_LOCK_KEY,
+        token,
+    )
 
 # -------------------------
 # GENESIS
@@ -338,17 +358,16 @@ def transaction(tx: Transaction):
 # 7. Libera el lock en el bloque finally, pase lo que pase.
 @app.post("/create-block")
 def create_block():
-    if r.exists("minando"):
+    lock_token = acquire_mining_lock()
+    if lock_token is None:
         return {"error": "ya se esta minando un bloque"}
-
-    r.set("minando", 1)
 
     try:
         pending = r.lrange("pending_transactions", 0, -1)
         if len(pending) == 0:
-            r.delete("minando")
             return {"error": "sin transacciones pendientes"}
 
+        pending_count = len(pending)
         pending = [json.loads(x) for x in pending]
         ultimo  = get_last_block()
         difficulty = r.get("difficulty")
@@ -416,7 +435,7 @@ def create_block():
             raise HTTPException(status_code=400, detail="El bloque no es coherente con la cadena")
 
         save_block(block)
-        r.delete("pending_transactions")
+        r.ltrim("pending_transactions", pending_count, -1)
 
         r.rpush("logs", json.dumps({
             "timestamp": time.time(),
@@ -430,7 +449,7 @@ def create_block():
         return block
 
     finally:
-        r.delete("minando")
+        release_mining_lock(lock_token)
 
 # Devolvemos toda la lista de Redis deserializada.
 @app.get("/blockchain")
@@ -685,8 +704,6 @@ def auto_miner_loop():
     while True:
         try:
             time.sleep(AUTO_MINE_INTERVAL)
-            if r.exists("minando"):
-                continue
             pending = r.llen("pending_transactions")
             if pending == 0:
                 continue
@@ -701,13 +718,15 @@ def auto_miner_loop():
 def _mine_one_block():
     """Versión interna de /create-block que también aplica los efectos
     ticket-aware al confirmar. Reutiliza la lógica de la API."""
-    if r.exists("minando"):
+    lock_token = acquire_mining_lock()
+    if lock_token is None:
         return None
-    r.set("minando", 1)
+
     try:
         pending_raw = r.lrange("pending_transactions", 0, -1)
         if len(pending_raw) == 0:
             return None
+        pending_count = len(pending_raw)
         pending_txs = [json.loads(x) for x in pending_raw]
         ultimo = get_last_block()
         difficulty = r.get("difficulty")
@@ -749,7 +768,7 @@ def _mine_one_block():
             for tx in pending_txs:
                 if tx.get("op_id"):
                     mark_operation_failed(tx["op_id"], "invalid_pow_solution")
-            r.delete("pending_transactions")
+            r.ltrim("pending_transactions", pending_count, -1)
             return None
 
         block["nonce"] = nonce
@@ -758,11 +777,11 @@ def _mine_one_block():
             for tx in pending_txs:
                 if tx.get("op_id"):
                     mark_operation_failed(tx["op_id"], "block_invalid")
-            r.delete("pending_transactions")
+            r.ltrim("pending_transactions", pending_count, -1)
             return None
 
         save_block(block)
-        r.delete("pending_transactions")
+        r.ltrim("pending_transactions", pending_count, -1)
 
         # Aplicar efectos ticket-aware.
         confirmed_at = time.time()
@@ -780,7 +799,7 @@ def _mine_one_block():
         purge_stale_solutions(task_id)
         return block
     finally:
-        r.delete("minando")
+        release_mining_lock(lock_token)
 
 # Lanzar el auto-miner solo en el proceso principal (uvicorn).
 _miner_thread = threading.Thread(target=auto_miner_loop, daemon=True, name="auto-miner")
