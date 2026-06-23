@@ -159,10 +159,17 @@ async function handleApproved(
     return NextResponse.json({ error: "listing_not_active" }, { status: 409 });
   }
 
-  // Idempotencia atómica: MP a veces manda el webhook dos veces casi en paralelo.
+  // Idempotencia atómica: MP a veces manda el webhook dos veces casi en
+  // paralelo. Cerramos la ventana entre claim y "set opRef real" poniendo un
+  // placeholder en nctOpRef. Sin esto, ambos webhooks ven nctOpRef=null
+  // mientras el primero está esperando la respuesta de submitTransfer
+  // (50-500ms de network), y los dos pasan el check → doble transferencia
+  // por el mismo pago → el bloque va con 2 txs de las cuales una siempre
+  // falla con not_current_owner.
+  const CLAIM_SENTINEL = "CLAIMING";
   const claim = await prisma.payment.updateMany({
     where: { id: payment.id, nctOpRef: null },
-    data: { status: "APPROVED", nctStatus: "PENDING" },
+    data: { status: "APPROVED", nctStatus: "PENDING", nctOpRef: CLAIM_SENTINEL },
   });
   if (claim.count === 0) {
     console.log(`[webhook] Payment ${payment.id} ya tenía nctOpRef, ignorando webhook duplicado.`);
@@ -211,6 +218,13 @@ async function handleApproved(
     console.log(`[webhook] Payment ${payment.id} APPROVED (${reason}) → NCT op ${result.opRef}`);
     return NextResponse.json({ ok: true, nctOpRef: result.opRef });
   } catch (err) {
+    // Resetear el sentinel para que un reintento futuro pueda volver a
+    // claim (ver shouldRetryMissingNctOp arriba). Si dejáramos "CLAIMING"
+    // permanente, el payment quedaría huérfano sin poder reprocesarse.
+    await prisma.payment.updateMany({
+      where: { id: payment.id, nctOpRef: CLAIM_SENTINEL },
+      data: { nctOpRef: null },
+    });
     console.error(`[webhook] Error disparando transfer para payment ${payment.id}:`, err);
     const failureType = classifyTransferError(err);
 
