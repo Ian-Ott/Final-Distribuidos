@@ -7,6 +7,7 @@ import time
 import redis
 import uuid
 import logging
+import hashlib
 
 # Este worker no mina localmente: delega el cálculo pesado al servidor GPU
 # vía HTTP y solo reporta el resultado.
@@ -30,14 +31,20 @@ GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/
 
 
 def connect_redis():
-    try:
-        client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, decode_responses=True)
-        client.ping()
-        log.info("Conectado a Redis")
-        return client
-    except Exception:
-        log.warning("Redis no disponible — logs solo por consola")
-        return None
+    # Reintentamos como con RabbitMQ. Antes, si Redis no respondía al
+    # primer ping, el worker se quedaba con r=None de por vida y toda su
+    # telemetría (solucion_encontrada, etc.) se perdía silenciosamente.
+    for intento in range(20):
+        try:
+            client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, decode_responses=True)
+            client.ping()
+            log.info("Conectado a Redis")
+            return client
+        except Exception:
+            log.warning(f"Redis no disponible (intento {intento+1}/20), reintentando en 3s...")
+            time.sleep(3)
+    log.error("Redis sigue sin responder tras 20 intentos — logs solo por consola")
+    return None
 
 
 def log_event(r, event: str, **fields):
@@ -120,11 +127,18 @@ def callback(ch, method, properties, body):
                 routing_key='soluciones',
                 body=json.dumps(solucion)
             )
+            data_str = tarea.get("data", "")
+            data_sha = hashlib.sha256(data_str.encode()).hexdigest() if data_str else "EMPTY"
+            verify_calc = hashlib.md5((data_str + str(nonce)).encode()).hexdigest()
             log_event(
                 r, "solucion_encontrada",
                 task_id=tarea.get("task_id"),
                 nonce=nonce, hash=hash_resultado,
                 start=tarea["start"], end=tarea["end"],
+                data_len=len(data_str),
+                data_sha256=data_sha,
+                local_md5_recompute=verify_calc,
+                local_matches_binary=verify_calc == hash_resultado,
             )
         else:
             log.info(f"[{WORKER_ID}] No se encontró solución en el rango [{tarea['start']} - {tarea['end']}]")
