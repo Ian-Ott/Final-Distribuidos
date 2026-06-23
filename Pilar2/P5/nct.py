@@ -142,16 +142,15 @@ def purge_stale_solutions(task_id: str):
             "error": str(e),
         }))
 
-def rabbit_keepalive_loop():
-    """Mantiene vivo el heartbeat incluso cuando NCT queda ocioso."""
-    while True:
-        try:
-            ensure_connection()
-        except Exception as e:
-            print(f"Error en keepalive de RabbitMQ: {e}")
-        time.sleep(RABBIT_KEEPALIVE_INTERVAL_SECONDS)
-
-threading.Thread(target=rabbit_keepalive_loop, daemon=True).start()
+# NOTA: el rabbit_keepalive_loop fue removido. La razón:
+# - pika.BlockingConnection NO es thread-safe, ni siquiera con RLock alrededor.
+#   El lock evita calls simultáneos pero pika mantiene estado interno que se
+#   corrompe al alternar entre threads. Esto causaba que algunas soluciones
+#   se perdieran (solucion_tomada sin bloque_creado correspondiente).
+# - El heartbeat AMQP de pika (heartbeat=RABBIT_HEARTBEAT_SECONDS=180) ya
+#   mantiene viva la conexión sin necesidad de un thread externo.
+# - Si la conexión muere, safe_basic_get/publish reconectan automáticamente.
+# Con esto, el único thread que toca RabbitMQ es el auto-miner.
 
 def wait_for_solution(task_id: str, timeout_seconds: int):
     """Espera solo la soluciÃ³n de esta corrida y descarta mensajes viejos."""
