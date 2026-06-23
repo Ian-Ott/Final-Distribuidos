@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <string.h>
 
+static const int MAX_INPUT_LEN = 4096;
+static const size_t NONCE_BUFFER_LEN = 20;
+
 __device__ void md5(const uint8_t *initial_msg, size_t initial_len, uint8_t *digest) {
     uint32_t h0 = 0x67452301, h1 = 0xefcdab89;
     uint32_t h2 = 0x98badcfe, h3 = 0x10325476;
@@ -34,7 +37,7 @@ __device__ void md5(const uint8_t *initial_msg, size_t initial_len, uint8_t *dig
     size_t new_len = initial_len + 1;
     while (new_len % 64 != 56) new_len++;
 
-    uint8_t msg[4096] = {0};
+    uint8_t msg[MAX_INPUT_LEN] = {0};
     for (size_t i = 0; i < initial_len; i++) msg[i] = initial_msg[i];
     msg[initial_len] = 0x80;
 
@@ -82,7 +85,7 @@ __global__ void brute_force_kernel(
 
     uint64_t nonce = start + idx;
 
-    char msg[4096];
+    char msg[MAX_INPUT_LEN];
     for (int i = 0; i < base_len; i++) msg[i] = base[i];
     char nonce_str[20]; int nonce_len;
     uint_to_str(nonce, nonce_str, &nonce_len);
@@ -134,9 +137,28 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if ((size_t)base_len + NONCE_BUFFER_LEN >= MAX_INPUT_LEN) {
+        printf("Error: cadena_base demasiado larga (%d bytes). Maximo soportado: %d\n",
+            base_len, MAX_INPUT_LEN - (int)NONCE_BUFFER_LEN - 1);
+        return 1;
+    }
+
+    size_t md5_padded_len = (size_t)base_len + NONCE_BUFFER_LEN + 1;
+    while (md5_padded_len % 64 != 56) md5_padded_len++;
+    if (md5_padded_len + 8 > MAX_INPUT_LEN) {
+        printf("Error: cadena_base demasiado larga para el padding MD5 (%d bytes)\n", base_len);
+        return 1;
+    }
+
     char *d_base, *d_prefix;
     uint64_t *d_nonce; uint8_t *d_hash; int *d_flag;
     uint64_t h_nonce = 0; uint8_t h_hash[16]; int h_flag = 0;
+
+    cudaError_t stack_err = cudaDeviceSetLimit(cudaLimitStackSize, 32768);
+    if (stack_err != cudaSuccess) {
+        printf("Error seteando stack CUDA: %s\n", cudaGetErrorString(stack_err));
+        return 1;
+    }
 
     cudaMalloc(&d_base,   base_len);
     cudaMalloc(&d_prefix, prefix_len);
@@ -173,7 +195,12 @@ int main(int argc, char *argv[]) {
                 cudaGetErrorString(err));
         }
 
-        cudaDeviceSynchronize();
+        cudaError_t sync_err = cudaDeviceSynchronize();
+        if(sync_err != cudaSuccess)
+        {
+            printf("Sync error: %s\n", cudaGetErrorString(sync_err));
+            break;
+        }
 
         cudaMemcpy(&h_flag, d_flag, sizeof(int), cudaMemcpyDeviceToHost);
         current += count;
