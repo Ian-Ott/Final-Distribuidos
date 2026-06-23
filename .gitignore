@@ -1,6 +1,8 @@
 # Secrets de K8s — nunca commitear valores reales.
 # El shape se documenta en k8s/gke/apps/secret.example.yaml.
 k8s/gke/apps/secret.yaml
+k8s/gke/infra/tls/
+k8s/gke/infra/rabbitmq-tls-secret.yaml.manual
 
 # Terraform
 infra/.terraform/

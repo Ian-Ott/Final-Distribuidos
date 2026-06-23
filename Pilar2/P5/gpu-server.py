@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import subprocess
-import redis
+import pika
+import ssl
+import json
 import time
 import threading
 import os
@@ -9,30 +11,52 @@ import os
 app = FastAPI()
 
 # -------------------------
-# CONEXIÓN A REDIS (para el heartbeat)
+# CONEXIÓN A RABBITMQ (para el heartbeat)
 # -------------------------
 
-def connect_redis():
+def rabbitmq_ssl_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return pika.SSLOptions(ctx)
+
+def connect_rabbitmq():
     while True:
         try:
-            r = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, decode_responses=True)
-            r.ping()
-            return r
+            conn = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    os.getenv("RABBITMQ_HOST", "rabbitmq"),
+                    port=5671,
+                    ssl_options=rabbitmq_ssl_context(),
+                )
+            )
+            print("gpu-server conectado a RabbitMQ (TLS)")
+            return conn
         except Exception:
-            print("Esperando Redis...")
+            print("Esperando RabbitMQ...")
             time.sleep(3)
 
-r = connect_redis()
-
 # -------------------------
-# KEEP-ALIVE
+# KEEP-ALIVE via RabbitMQ
 # -------------------------
-# El TrP monitorea esta clave para saber si hay GPU física disponible.
-# TTL de 30s: si el gpu-server muere o queda colgado, la clave desaparece sola.
+# Publica un mensaje cada 10s en la cola heartbeat_gpu.
+# El TrP lo consume y setea la key en Redis.
 
 def heartbeat_loop():
+    hb_conn = connect_rabbitmq()
+    hb_ch = hb_conn.channel()
+    hb_ch.queue_declare(queue='heartbeat_gpu')
     while True:
-        r.setex("heartbeat:gpu-server", 30, "alive")
+        try:
+            hb_ch.basic_publish(
+                exchange='',
+                routing_key='heartbeat_gpu',
+                body=json.dumps({"status": "alive", "timestamp": time.time()})
+            )
+        except Exception:
+            hb_conn = connect_rabbitmq()
+            hb_ch = hb_conn.channel()
+            hb_ch.queue_declare(queue='heartbeat_gpu')
         time.sleep(10)
 
 threading.Thread(target=heartbeat_loop, daemon=True).start()

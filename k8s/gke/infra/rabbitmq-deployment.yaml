@@ -19,8 +19,15 @@ spec:
         - name: rabbitmq
           image: rabbitmq:3-management
           ports:
-            - containerPort: 5672
-            - containerPort: 15672
+            - containerPort: 5671
+            - containerPort: 15671
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            - name: config
+              mountPath: /etc/rabbitmq/rabbitmq.conf
+              subPath: rabbitmq.conf
           resources:
             requests:
               cpu: 25m
@@ -40,3 +47,10 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 10
+      volumes:
+        - name: tls
+          secret:
+            secretName: rabbitmq-tls
+        - name: config
+          configMap:
+            name: rabbitmq-config

@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, Any
 import pika
+import ssl as ssl_mod
 import json
 import time
 import redis
@@ -31,12 +32,20 @@ r = connect_redis()
 
 app = FastAPI()
 
+def rabbitmq_ssl_context():
+    ctx = ssl_mod.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl_mod.CERT_NONE
+    return pika.SSLOptions(ctx)
+
 def connect_rabbitmq():
     while True:
         try:
             connection = pika.BlockingConnection(
                 pika.ConnectionParameters(
                     "rabbitmq",
+                    port=5671,
+                    ssl_options=rabbitmq_ssl_context(),
                     heartbeat=30,
                     blocked_connection_timeout=300
                 )

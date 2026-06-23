@@ -4,7 +4,7 @@ metadata:
   name: redis
   namespace: sdypp
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: redis
   ports:

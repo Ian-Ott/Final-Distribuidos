@@ -1,4 +1,5 @@
 import pika
+import ssl
 import json
 import requests
 import os
@@ -50,10 +51,22 @@ def log_event(r, event: str, **fields):
 
 r = connect_redis()
 
+def rabbitmq_ssl_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return pika.SSLOptions(ctx)
+
 log.info(f"Conectando a RabbitMQ (worker_id={WORKER_ID})")
 while True:
     try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(os.getenv("RABBITMQ_HOST", "rabbitmq")))
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                os.getenv("RABBITMQ_HOST", "rabbitmq"),
+                port=5671,
+                ssl_options=rabbitmq_ssl_context(),
+            )
+        )
         channel = connection.channel()
         break
     except pika.exceptions.AMQPConnectionError:

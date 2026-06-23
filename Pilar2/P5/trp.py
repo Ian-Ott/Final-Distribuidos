@@ -35,11 +35,19 @@ def connect_redis():
             log.warning("Esperando Redis...")
             time.sleep(3)
 
+def rabbitmq_ssl_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return pika.SSLOptions(ctx)
+
 def connect_rabbitmq():
     while True:
         try:
-            conn = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
-            log.info("Conectado a RabbitMQ")
+            conn = pika.BlockingConnection(
+                pika.ConnectionParameters("rabbitmq", port=5671, ssl_options=rabbitmq_ssl_context())
+            )
+            log.info("Conectado a RabbitMQ (TLS)")
             return conn
         except Exception:
             log.warning("Esperando RabbitMQ...")
@@ -51,6 +59,7 @@ channel = connection.channel()
 channel.queue_declare(queue='tareas_pool')   # NCT → TrP
 channel.queue_declare(queue='tareas')        # TrP → Workers
 channel.queue_declare(queue='soluciones')
+channel.queue_declare(queue='heartbeat_gpu') # gpu-server → TrP
 
 # -------------------------
 # MONITOREO DE GPU
@@ -86,7 +95,20 @@ def scale_cpu_workers(replicas: int):
     except Exception as e:
         print(f"[TrP] Error escalando worker-cpu: {e}")
 
-# Verificamos si el gpu-server sigue vivo chequeando su heartbeat en Redis.
+def heartbeat_consumer():
+    """Consume mensajes de la cola heartbeat_gpu y actualiza Redis."""
+    hb_conn = connect_rabbitmq()
+    hb_ch = hb_conn.channel()
+    hb_ch.queue_declare(queue='heartbeat_gpu')
+
+    def on_heartbeat(ch, method, properties, body):
+        r.setex("heartbeat:gpu-server", 30, "alive")
+
+    hb_ch.basic_consume(queue='heartbeat_gpu', on_message_callback=on_heartbeat, auto_ack=True)
+    hb_ch.start_consuming()
+
+threading.Thread(target=heartbeat_consumer, daemon=True).start()
+
 def is_gpu_server_alive() -> bool:
     return r.exists("heartbeat:gpu-server") == 1
 

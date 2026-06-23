@@ -1,4 +1,5 @@
 import pika
+import ssl
 import json
 import time
 import redis
@@ -24,11 +25,19 @@ WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos
 HAS_GPU = False # No mina en GPU
 
 # Retry loop para conectarse a rabbitmq
+def rabbitmq_ssl_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return pika.SSLOptions(ctx)
+
 def connect_rabbitmq():
     while True:
         try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters("rabbitmq"))
-            log.info("Conectado a RabbitMQ")
+            connection = pika.BlockingConnection(
+                pika.ConnectionParameters("rabbitmq", port=5671, ssl_options=rabbitmq_ssl_context())
+            )
+            log.info("Conectado a RabbitMQ (TLS)")
             return connection
         except Exception:
             log.warning("Esperando RabbitMQ...")
