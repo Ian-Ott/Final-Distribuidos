@@ -4,7 +4,16 @@ metadata:
   name: blockchain-nct
   namespace: sdypp
 spec:
-  replicas: 2
+  # 1 sola réplica: pika.BlockingConnection no es thread-safe y dos NCT con
+  # auto-miner activo se roban soluciones entre sí (aunque cada uno tenga su
+  # propio lock de Redis). Para alta disponibilidad real habría que aislar la
+  # conexión por thread y/o usar leader election. Hoy 1 réplica + el auto-miner
+  # interno alcanza para el flujo del TP.
+  replicas: 1
+  strategy:
+    # Recreate evita que durante un rollout existan 2 pods con auto-miner
+    # corriendo en paralelo (causa el mismo problema que tener 2 réplicas).
+    type: Recreate
   selector:
     matchLabels:
       app: blockchain-nct
