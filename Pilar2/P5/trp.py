@@ -102,16 +102,35 @@ def scale_cpu_workers(replicas: int):
         print(f"[TrP] Error escalando worker-cpu: {e}")
 
 def heartbeat_consumer():
-    """Consume mensajes de la cola heartbeat_gpu y actualiza Redis."""
-    hb_conn = connect_rabbitmq()
-    hb_ch = hb_conn.channel()
-    hb_ch.queue_declare(queue='heartbeat_gpu')
+    """Consume mensajes de la cola heartbeat_gpu y actualiza Redis.
 
+    Wrapped en un loop infinito con catch-all: si la conexión a RabbitMQ se
+    cierra (heartbeat timeout, SSL EOF) o Redis devuelve un error transitorio
+    (ReadOnly durante failover, timeout), reconectamos en 3s en vez de matar
+    el thread. Antes una sola excepción mataba el thread, lo cual hacía que
+    nadie renovara heartbeat:gpu-server, Redis lo expiraba en 30s y
+    monitor_loop activaba fallback CPU como falso positivo.
+    """
     def on_heartbeat(ch, method, properties, body):
-        r.setex("heartbeat:gpu-server", 30, "alive")
+        try:
+            # set(..., ex=N) reemplaza a setex deprecado. Si Redis está en
+            # estado read-only durante un failover, esta llamada lanza
+            # ReadOnlyError — la capturamos arriba en el while True.
+            r.set("heartbeat:gpu-server", "alive", ex=30)
+        except Exception as e:
+            log.warning(f"heartbeat write fallo (sigo consumiendo): {e}")
 
-    hb_ch.basic_consume(queue='heartbeat_gpu', on_message_callback=on_heartbeat, auto_ack=True)
-    hb_ch.start_consuming()
+    while True:
+        try:
+            hb_conn = connect_rabbitmq()
+            hb_ch = hb_conn.channel()
+            hb_ch.queue_declare(queue='heartbeat_gpu')
+            hb_ch.basic_consume(queue='heartbeat_gpu', on_message_callback=on_heartbeat, auto_ack=True)
+            log.info("heartbeat_consumer escuchando")
+            hb_ch.start_consuming()
+        except Exception as e:
+            log.error(f"heartbeat_consumer crashed: {e}. Reintento en 3s.")
+            time.sleep(3)
 
 threading.Thread(target=heartbeat_consumer, daemon=True).start()
 
@@ -172,12 +191,15 @@ def restore_from_fallback():
 
 def monitor_loop():
     while True:
-        gpu_alive = is_gpu_server_alive()
-        in_fallback = r.exists(FALLBACK_MODE_KEY) == 1
-        if not gpu_alive and not in_fallback:
-            activate_fallback()
-        elif gpu_alive and in_fallback:
-            restore_from_fallback()
+        try:
+            gpu_alive = is_gpu_server_alive()
+            in_fallback = r.exists(FALLBACK_MODE_KEY) == 1
+            if not gpu_alive and not in_fallback:
+                activate_fallback()
+            elif gpu_alive and in_fallback:
+                restore_from_fallback()
+        except Exception as e:
+            log.error(f"monitor_loop iter fallo (sigo intentando): {e}")
         time.sleep(15)
 
 threading.Thread(target=monitor_loop, daemon=True).start()
