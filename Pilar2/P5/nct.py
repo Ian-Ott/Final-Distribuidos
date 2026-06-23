@@ -62,46 +62,60 @@ connection = connect_rabbitmq()
 channel = connection.channel()
 channel.queue_declare(queue='tareas_pool')  # NCT → TrP
 channel.queue_declare(queue='soluciones')   # Workers → NCT
+rabbit_lock = threading.RLock()
 
 def ensure_connection():
     """Verifica que la conexión y el canal sigan vivos; si no, reconecta."""
     global connection, channel
-    try:
-        if connection.is_closed or channel.is_closed:
-            raise Exception("conexion cerrada")
-        connection.process_data_events(time_limit=0)
-    except Exception:
-        print("Conexión a RabbitMQ perdida, reconectando...")
+    with rabbit_lock:
         try:
-            connection.close()
+            if connection.is_closed or channel.is_closed:
+                raise Exception("conexion cerrada")
+            connection.process_data_events(time_limit=0)
         except Exception:
-            pass
-        connection = connect_rabbitmq()
-        channel = connection.channel()
-        channel.queue_declare(queue='tareas_pool')
-        channel.queue_declare(queue='soluciones')
+            print("Conexión a RabbitMQ perdida, reconectando...")
+            try:
+                connection.close()
+            except Exception:
+                pass
+            connection = connect_rabbitmq()
+            channel = connection.channel()
+            channel.queue_declare(queue='tareas_pool')
+            channel.queue_declare(queue='soluciones')
 
 def safe_basic_get(queue: str):
     """basic_get con reconexión automática si la conexión se cayó."""
     global channel
-    ensure_connection()
-    try:
-        return channel.basic_get(queue=queue, auto_ack=True)
-    except Exception as e:
-        print(f"Error en basic_get, reconectando: {e}")
+    with rabbit_lock:
         ensure_connection()
-        return channel.basic_get(queue=queue, auto_ack=True)
+        try:
+            result = channel.basic_get(queue=queue, auto_ack=False)
+        except Exception as e:
+            print(f"Error en basic_get, reconectando: {e}")
+            ensure_connection()
+            result = channel.basic_get(queue=queue, auto_ack=False)
+        method, properties, body = result
+        if method is None:
+            return None
+        return method, properties, body
 
 def safe_basic_publish(routing_key: str, body: str):
     """basic_publish con reconexión automática si la conexión se cayó."""
     global channel
-    ensure_connection()
-    try:
-        channel.basic_publish(exchange='', routing_key=routing_key, body=body)
-    except Exception as e:
-        print(f"Error en basic_publish, reconectando: {e}")
+    with rabbit_lock:
         ensure_connection()
-        channel.basic_publish(exchange='', routing_key=routing_key, body=body)
+        try:
+            channel.basic_publish(exchange='', routing_key=routing_key, body=body)
+        except Exception as e:
+            print(f"Error en basic_publish, reconectando: {e}")
+            ensure_connection()
+            channel.basic_publish(exchange='', routing_key=routing_key, body=body)
+
+def safe_basic_ack(delivery_tag):
+    global channel
+    with rabbit_lock:
+        ensure_connection()
+        channel.basic_ack(delivery_tag=delivery_tag)
 
 def rabbit_keepalive_loop():
     """Mantiene vivo el heartbeat incluso cuando NCT queda ocioso."""
@@ -121,11 +135,12 @@ def wait_for_solution(task_id: str, timeout_seconds: int):
     while time.time() < deadline:
         result = safe_basic_get('soluciones')
         if result is not None:
-            _, _, body = result
+            method, _, body = result
             if body is not None:
                 try:
                     solucion = json.loads(body)
                 except json.JSONDecodeError:
+                    safe_basic_ack(method.delivery_tag)
                     r.rpush("logs", json.dumps({
                         "timestamp": time.time(),
                         "event": "solucion_descartada",
@@ -136,6 +151,7 @@ def wait_for_solution(task_id: str, timeout_seconds: int):
 
                 solution_task_id = solucion.get("task_id")
                 if solution_task_id != task_id:
+                    safe_basic_ack(method.delivery_tag)
                     r.rpush("logs", json.dumps({
                         "timestamp": time.time(),
                         "event": "solucion_descartada",
@@ -144,6 +160,14 @@ def wait_for_solution(task_id: str, timeout_seconds: int):
                     }))
                     continue
 
+                safe_basic_ack(method.delivery_tag)
+                r.rpush("logs", json.dumps({
+                    "timestamp": time.time(),
+                    "event": "solucion_tomada",
+                    "task_id": task_id,
+                    "nonce": solucion.get("nonce"),
+                    "hash": solucion.get("hash"),
+                }))
                 return solucion
 
         time.sleep(MINING_POLL_INTERVAL_SECONDS)
@@ -319,7 +343,8 @@ def create_block():
             result = safe_basic_get('soluciones')
             if result is None:
                 break
-            _, _, body = result
+            method, _, body = result
+            safe_basic_ack(method.delivery_tag)
             if body is None:
                 break
 
@@ -673,7 +698,8 @@ def _mine_one_block():
             result = safe_basic_get('soluciones')
             if result is None:
                 break
-            _, _, body = result
+            method, _, body = result
+            safe_basic_ack(method.delivery_tag)
             if body is None:
                 break
 
