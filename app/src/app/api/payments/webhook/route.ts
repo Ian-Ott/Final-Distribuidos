@@ -3,6 +3,22 @@ import { prisma } from "@/lib/db";
 import { getPaymentInfo } from "@/lib/payments/mercadopago";
 import { submitTransfer } from "@/lib/nct/client";
 
+function classifyTransferError(err: unknown): "terminal" | "retryable" {
+  const message = err instanceof Error ? err.message : String(err);
+
+  if (
+    message.includes("ticket_not_found") ||
+    message.includes("not_current_owner") ||
+    message.includes("listing_not_active") ||
+    message.includes("no_ticket_reserved") ||
+    message.includes("invalid_signature")
+  ) {
+    return "terminal";
+  }
+
+  return "retryable";
+}
+
 // POST /api/payments/webhook
 // MercadoPago envía notificaciones aquí cada vez que cambia el estado de un pago.
 // Doc: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
@@ -135,7 +151,7 @@ async function handleApproved(
   // Idempotencia atómica: MP a veces manda el webhook dos veces casi en paralelo.
   const claim = await prisma.payment.updateMany({
     where: { id: payment.id, nctOpRef: null },
-    data: { status: "APPROVED" },
+    data: { status: "APPROVED", nctStatus: "PENDING" },
   });
   if (claim.count === 0) {
     console.log(`[webhook] Payment ${payment.id} ya tenía nctOpRef, ignorando webhook duplicado.`);
@@ -185,11 +201,17 @@ async function handleApproved(
     return NextResponse.json({ ok: true, nctOpRef: result.opRef });
   } catch (err) {
     console.error(`[webhook] Error disparando transfer para payment ${payment.id}:`, err);
+    const failureType = classifyTransferError(err);
+
     await prisma.payment.update({
       where: { id: payment.id },
-      data: { nctStatus: "FAILED" },
+      data: { nctStatus: failureType === "terminal" ? "FAILED" : "PENDING" },
     });
-    return NextResponse.json({ error: "nct_transfer_failed" }, { status: 502 });
+
+    return NextResponse.json(
+      { error: failureType === "terminal" ? "nct_transfer_failed_terminal" : "nct_transfer_retryable" },
+      { status: failureType === "terminal" ? 409 : 502 },
+    );
   }
 }
 
