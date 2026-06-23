@@ -86,10 +86,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "payment_not_found" }, { status: 404 });
   }
 
-  // Idempotencia: si ya lo procesamos, no hacer nada.
+  // Idempotencia: si ya lo procesamos, no hacer nada. Excepción importante:
+  // si el pago quedó APPROVED pero nunca llegamos a guardar nctOpRef, un webhook
+  // duplicado tiene que reintentar la transferencia en blockchain.
   if (payment.mpPaymentId === mpPaymentId && payment.status !== "PENDING") {
-    console.log(`[webhook] Payment ${paymentId} ya procesado (${payment.status}), ignorando.`);
-    return NextResponse.json({ ok: true, already_processed: true });
+    const shouldRetryMissingNctOp =
+      payment.status === "APPROVED" &&
+      payment.nctStatus === "PENDING" &&
+      payment.nctOpRef === null;
+
+    if (!shouldRetryMissingNctOp) {
+      console.log(`[webhook] Payment ${paymentId} ya procesado (${payment.status}), ignorando.`);
+      return NextResponse.json({ ok: true, already_processed: true });
+    }
+
+    console.warn(`[webhook] Payment ${paymentId} aprobado sin nctOpRef; reintentando transferencia.`);
   }
 
   // Actualizar datos de MP.

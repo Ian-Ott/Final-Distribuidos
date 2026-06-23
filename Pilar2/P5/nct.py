@@ -712,8 +712,18 @@ def auto_miner_loop():
                 _mine_one_block()
             except Exception as e:
                 print(f"[auto-miner] error: {e}")
+                r.rpush("logs", json.dumps({
+                    "timestamp": time.time(),
+                    "event": "auto_miner_error",
+                    "error": str(e),
+                }))
         except Exception as e:
             print(f"[auto-miner] loop error: {e}")
+            r.rpush("logs", json.dumps({
+                "timestamp": time.time(),
+                "event": "auto_miner_loop_error",
+                "error": str(e),
+            }))
 
 def _mine_one_block():
     """Versión interna de /create-block que también aplica los efectos
@@ -783,11 +793,7 @@ def _mine_one_block():
         save_block(block)
         r.ltrim("pending_transactions", pending_count, -1)
 
-        # Aplicar efectos ticket-aware.
         confirmed_at = time.time()
-        for tx in pending_txs:
-            apply_confirmed_tx(tx, block["index"], confirmed_at)
-
         r.rpush("logs", json.dumps({
             "timestamp": confirmed_at,
             "event": "bloque_creado",
@@ -796,6 +802,24 @@ def _mine_one_block():
             "hash": block["block_hash"],
             "tx_count": len(pending_txs),
         }))
+
+        # Aplicar efectos ticket-aware sin ocultar que el bloque ya fue creado.
+        for tx in pending_txs:
+            try:
+                apply_confirmed_tx(tx, block["index"], confirmed_at)
+            except Exception as e:
+                op_id = tx.get("op_id")
+                if op_id:
+                    mark_operation_failed(op_id, "apply_confirmed_tx_error")
+                r.rpush("logs", json.dumps({
+                    "timestamp": time.time(),
+                    "event": "apply_confirmed_tx_error",
+                    "task_id": task_id,
+                    "op_id": op_id,
+                    "tx_type": tx.get("tx_type"),
+                    "error": str(e),
+                }))
+
         purge_stale_solutions(task_id)
         return block
     finally:
