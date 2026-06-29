@@ -47,6 +47,25 @@ jobs:
           cluster_name: sdypp-cluster
           location: us-central1-a
 
+      # Espera a que el node pool `monitoring` tenga un nodo Ready antes de
+      # desplegar. Sin esto, si esta corrida arranca en paralelo con Pipeline 1
+      # (que crea el pool y tarda varios minutos), todos los pods del stack
+      # quedan Pending por el taint/nodeSelector y el rollout timeoutea.
+      # Espera hasta ~10 min; si el pool nunca aparece, falla con mensaje claro.
+      - name: Esperar node pool monitoring
+        run: |
+          for i in $(seq 1 40); do
+            ready=$(kubectl get nodes -l pool=monitoring --no-headers 2>/dev/null | grep -c " Ready ") || ready=0
+            if [ "$ready" -ge 1 ]; then
+              echo "node pool 'monitoring' con $ready nodo(s) Ready."
+              exit 0
+            fi
+            echo "Esperando node pool 'monitoring'... ($i/40)"
+            sleep 15
+          done
+          echo "::error::El node pool 'monitoring' no apareció. Corré primero Pipeline 1 (crea el pool con infra/gke.tf)."
+          exit 1
+
       # Namespace y RBAC primero: el resto de los recursos viven en el ns
       # `observability` y kubectl apply -f <dir> ordena por nombre de archivo,
       # así que sin esto algunos objetos se aplicarían antes de existir el ns.
@@ -60,5 +79,7 @@ jobs:
 
       - name: Esperar rollout de Grafana/Prometheus
         run: |
-          kubectl -n observability rollout status deploy/prometheus --timeout=180s
-          kubectl -n observability rollout status deploy/grafana --timeout=180s
+          # 300s: la primera vez los nodos del pool monitoring tienen que bajar
+          # las imágenes (Prometheus/Grafana/Loki/Tempo), que no son chicas.
+          kubectl -n observability rollout status deploy/prometheus --timeout=300s
+          kubectl -n observability rollout status deploy/grafana --timeout=300s
