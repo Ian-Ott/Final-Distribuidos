@@ -80,7 +80,10 @@ channel.queue_declare(queue='heartbeat_gpu') # gpu-server → TrP
 # MONITOREO DE GPU
 # -------------------------
 
-FALLBACK_DIFFICULTY = "0"    # dificultad reducida para CPU
+FALLBACK_DIFFICULTY = "0"    # dificultad reducida para CPU (1 cero)
+GPU_DIFFICULTY = "00"        # dificultad normal con GPU (2 ceros). Es el valor
+                             # canónico al que se restaura: no dependemos de haber
+                             # guardado el original, así nunca queda pegada en "0".
 ORIGINAL_DIFFICULTY_KEY = "difficulty_original"
 CPU_WORKER_REPLICAS = 2     # réplicas de worker-cpu en modo fallback
 
@@ -188,9 +191,13 @@ def restore_from_fallback():
         return False
     log.info("gpu-server activo de nuevo — restaurando modo GPU")
     original = r.get(ORIGINAL_DIFFICULTY_KEY)
-    if original:
-        r.set("difficulty", original)
-        r.delete(ORIGINAL_DIFFICULTY_KEY)
+    # Si no se guardó el original, o quedó en "0" (puede pasar si el fallback se
+    # activó cuando la dificultad ya era "0" por flapping previo), volvemos al
+    # default de GPU. Antes esto dejaba la dificultad pegada en "0" para siempre.
+    if not original or original == FALLBACK_DIFFICULTY:
+        original = GPU_DIFFICULTY
+    r.set("difficulty", original)
+    r.delete(ORIGINAL_DIFFICULTY_KEY)
     r.rpush("logs", json.dumps({
         "timestamp": time.time(),
         "event": "fallback_cpu_restaurado",
