@@ -30,6 +30,11 @@ spec:
               value: "34.46.108.71"
             - name: GPU_SERVICE_URL
               value: "http://blockchain-gpu-server:8000/mine"
+            # Tracing apagado: este pod vive en el cluster del profesor y no
+            # alcanza el Alloy de GKE (alloy.observability no resuelve acá), así
+            # que el exporter OTLP spameaba errores. Logs y /metrics siguen.
+            - name: OTEL_SDK_DISABLED
+              value: "true"
           resources:
             requests:
               cpu: 50m

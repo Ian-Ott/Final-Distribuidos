@@ -4,6 +4,13 @@ metadata:
   name: blockchain-gpu-server
 spec:
   replicas: 1
+  # Recreate (no RollingUpdate): el pod pide nvidia.com/gpu:1 y solo hay 1 GPU.
+  # Con RollingUpdate, k8s intenta crear el pod nuevo ANTES de matar el viejo
+  # (surge) -> necesitaria una 2da GPU -> queda trabado en Pending. Recreate
+  # mata el viejo primero, libera la GPU, y recién ahi crea el nuevo. Asi un
+  # `rollout restart` funciona sin tener que borrar el pod a mano.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: blockchain-gpu-server
@@ -26,6 +33,10 @@ spec:
           env:
             - name: RABBITMQ_HOST
               value: "34.46.108.71"
+            # Tracing apagado: no alcanza el Alloy de GKE desde el cluster del
+            # profesor (ver nota en worker-deployment.yaml).
+            - name: OTEL_SDK_DISABLED
+              value: "true"
           resources:
             limits:
               nvidia.com/gpu: 1
