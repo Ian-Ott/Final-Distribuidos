@@ -146,11 +146,19 @@ def callback(ch, method, properties, body):
                 delivery_tag=method.delivery_tag
             )
     except Exception as e:
-        log.error(f"[{WORKER_ID}] Error procesando tarea: {e}", exc_info=True)
-        ch.basic_nack(
-            delivery_tag=method.delivery_tag,
-            requeue=True
-        )
+        # Reintentar UNA sola vez y después soltar la tarea (ack), en vez de
+        # requeue infinito. Antes, si el gpu-server estaba caído o timeouteaba,
+        # cada tarea rebotaba para siempre (poison message) y generaba una
+        # tormenta de requeue que saturaba el pipeline (bug M3). pika marca
+        # method.redelivered=True cuando el mensaje ya fue entregado antes; lo
+        # usamos como contador de 1 reintento. Si igual no se mina, el NCT
+        # timeoutea y el auto-miner republica un task nuevo.
+        already_retried = bool(method.redelivered)
+        log.error(f"[{WORKER_ID}] Error procesando tarea (redelivered={already_retried}): {e}", exc_info=True)
+        if already_retried:
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        else:
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 # Escuchamos de la cola 'tareas'
 channel.basic_consume(

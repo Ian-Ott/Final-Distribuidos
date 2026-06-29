@@ -28,6 +28,29 @@ spec:
         ports:
 
         - containerPort: 8000
+
+        # Liveness: /healthz NO toca Redis -> solo reinicia el pod si el
+        # proceso uvicorn se colgó de verdad, no cuando Redis está caído.
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          failureThreshold: 3
+
+        # Readiness: /status sí toca Redis. Mientras Redis no responda (o el
+        # proceso aún esté importando y conectando a RabbitMQ a nivel módulo),
+        # el pod sale del Service y no recibe tráfico -> evita los
+        # "connection refused" esporádicos al emitir/minar.
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+
         resources:
 
           requests:

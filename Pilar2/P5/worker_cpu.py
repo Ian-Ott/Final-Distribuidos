@@ -110,37 +110,52 @@ def mine_cpu(data: str, difficulty: str, start: int, end: int):
 # Si encuentra solución la publica en la cola soluciones para que el NCT la recoja.
 # Si no encuentra nada, no publica nada, simplemente termina y queda listo para la próxima tarea.
 def callback(ch, method, properties, body):
-    tarea = json.loads(body)
+    # auto_ack=False + ack manual al terminar: si el worker muere a mitad del
+    # minado, la tarea queda sin ackear y RabbitMQ la reentrega a otro worker
+    # en vez de perderse (bug M5). El ack se hace recién después de procesar.
+    try:
+        tarea = json.loads(body)
 
-    log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
+        log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
 
-    nonce, hash_resultado = mine_cpu(
-        tarea["data"],
-        tarea["difficulty"],
-        tarea["start"],
-        tarea["end"]
-    )
-
-    if nonce is not None:
-        channel.basic_publish(
-            exchange='',
-            routing_key='soluciones',
-            body=json.dumps({
-                "task_id": tarea.get("task_id"),
-                "nonce": nonce,
-                "hash": hash_resultado,
-            })
+        nonce, hash_resultado = mine_cpu(
+            tarea["data"],
+            tarea["difficulty"],
+            tarea["start"],
+            tarea["end"]
         )
-        log.info(f"[{WORKER_ID}] Nonce encontrado: {nonce}")
-        log_event(
-            "solucion_encontrada",
-            task_id=tarea.get("task_id"),
-            nonce=nonce, hash=hash_resultado,
-            start=tarea["start"], end=tarea["end"],
-        )
-    else:
-        log.info(f"[{WORKER_ID}] Sin solución en rango {tarea['start']}-{tarea['end']}")
 
-channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=True)
+        if nonce is not None:
+            channel.basic_publish(
+                exchange='',
+                routing_key='soluciones',
+                body=json.dumps({
+                    "task_id": tarea.get("task_id"),
+                    "nonce": nonce,
+                    "hash": hash_resultado,
+                })
+            )
+            log.info(f"[{WORKER_ID}] Nonce encontrado: {nonce}")
+            log_event(
+                "solucion_encontrada",
+                task_id=tarea.get("task_id"),
+                nonce=nonce, hash=hash_resultado,
+                start=tarea["start"], end=tarea["end"],
+            )
+        else:
+            log.info(f"[{WORKER_ID}] Sin solución en rango {tarea['start']}-{tarea['end']}")
+
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+    except Exception as e:
+        # Reintentar una vez y luego soltar (mismo patrón anti-poison que el
+        # worker GPU): evita el requeue infinito si el mensaje es inválido.
+        already_retried = bool(method.redelivered)
+        log.error(f"[{WORKER_ID}] Error procesando tarea (redelivered={already_retried}): {e}", exc_info=True)
+        if already_retried:
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        else:
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+
+channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=False)
 log.info(f"[{WORKER_ID}] Worker CPU esperando tareas...")
 channel.start_consuming()

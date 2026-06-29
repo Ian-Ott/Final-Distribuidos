@@ -51,10 +51,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const valid = await verifySignature(session.publicKey, payload, signature);
   if (!valid) return NextResponse.json({ error: "invalid_signature" }, { status: 400 });
 
-  // 1. Marcar evento como MINTING para que la UI muestre el estado intermedio.
-  // 2. Despachar la operación al mock/NCT real (devuelve PENDING + opRef).
-  // El status del evento pasa a EMITTED cuando la op se confirme (la propia
-  // operación settle hace el update).
+  // Reclamo ATÓMICO del evento: la transición a MINTING se hace con un
+  // updateMany condicional (status NOT IN EMITTED/MINTING) en una sola
+  // operación. El chequeo de status de arriba es solo un fast-path; este claim
+  // es el que cierra el race: si dos requests concurrentes llegan juntas, solo
+  // una obtiene count===1 y emite — la otra ve count===0 y aborta. Sin esto,
+  // ambas pasaban el chequeo leyendo DRAFT y emitían dos veces (bug M2; el fix
+  // previo cd02421 solo cubría el doble-submit del form en el cliente).
+  const claim = await prisma.event.updateMany({
+    where: { id: event.id, status: { notIn: ["EMITTED", "MINTING"] } },
+    data: { status: "MINTING" },
+  });
+  if (claim.count === 0) {
+    const fresh = await prisma.event.findUnique({ where: { id: event.id } });
+    return NextResponse.json(
+      { error: fresh?.status === "EMITTED" ? "already_emitted" : "already_minting" },
+      { status: 409 },
+    );
+  }
+
+  // Ya somos los dueños del claim. Despachar la operación al mock/NCT real.
+  // El status pasa a EMITTED cuando la op se confirme (lo hace el settle).
   let result;
   try {
     result = await submitMintBatch({
@@ -65,6 +82,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       signature,
     });
   } catch (err) {
+    // Revertir el claim para no dejar el evento trabado en MINTING sin op.
+    await prisma.event.updateMany({
+      where: { id: event.id, status: "MINTING" },
+      data: { status: "DRAFT", ncTBatchRef: null },
+    });
     console.error("[emit] submitMintBatch failed:", err);
     return NextResponse.json(
       {
@@ -77,7 +99,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const updated = await prisma.event.update({
     where: { id: event.id },
-    data: { status: "MINTING", ncTBatchRef: result.opRef },
+    data: { ncTBatchRef: result.opRef },
   });
 
   return NextResponse.json({ event: updated, nct: result });

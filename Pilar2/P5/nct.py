@@ -233,6 +233,12 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
 # -------------------------
 
 TOTAL = 10000000
+# Tope de la lista "logs" en Redis. Es telemetría/debug, no fuente de verdad,
+# así que la acotamos para que no crezca sin límite y termine OOM-kileando a
+# Redis (que es el cerebro de todo el sistema). El logs_janitor de abajo la
+# trimea periódicamente a este tamaño.
+MAX_LOGS = int(os.getenv("MAX_LOGS", "5000"))
+LOGS_TRIM_INTERVAL_SECONDS = int(os.getenv("LOGS_TRIM_INTERVAL_SECONDS", "10"))
 MINING_TIMEOUT_SECONDS = int(os.getenv("MINING_TIMEOUT_SECONDS", "180"))
 MINING_POLL_INTERVAL_SECONDS = 0.5
 MINING_LOCK_KEY = "minando"
@@ -366,114 +372,18 @@ def transaction(tx: Transaction):
 
     return {"ok": True, "pending": r.llen("pending_transactions")}
 
-#Orquesta la creación de un nuevo bloque en la blockchain.
-# 1. Adquiere un lock en Redis ("minando") para evitar que las 2 réplicas del NCT creen bloques simultáneamente y rompan la cadena.
-# 2. Arma el bloque con las transacciones pendientes y el hash del bloque anterior, pero SIN nonce,
-# ese es el desafío que van a resolver los workers.
-# 3. Publica el bloque como tarea en [tareas_pool]. El TrP lo subdivide en chunks y los distribuye entre los workers GPU (o CPU en fallback).
-# 4. Espera bloqueado hasta que algún worker publique una solución en [soluciones]. Antes de cada lectura/escritura a RabbitMQ
-# se verifica la conexión (ensure_connection) para reconectar automáticamente si el canal se cayó por inactividad prolongada durante la espera.
-# 5. Verifica que el hash recibido sea válido y cumpla la dificultad actual. Lee la dificultad de Redis en este momento, no al inicio, porque el TrP
-# puede haberla reducido durante el minado si detectó que no había GPU.
-# 6. Guarda el bloque en Redis de dos formas:
-# - En la lista "blockchain" para recorrer la cadena en orden.
-# - Como hash "block:N" para acceso directo por índice.
-# 7. Libera el lock en el bloque finally, pase lo que pase.
-@app.post("/create-block")
-def create_block():
-    lock_token = acquire_mining_lock()
-    if lock_token is None:
-        return {"error": "ya se esta minando un bloque"}
-
-    try:
-        pending = r.lrange("pending_transactions", 0, -1)
-        if len(pending) == 0:
-            return {"error": "sin transacciones pendientes"}
-
-        pending_count = len(pending)
-        pending = [json.loads(x) for x in pending]
-        ultimo  = get_last_block()
-        difficulty = r.get("difficulty")
-
-        block = {
-            "index":         r.llen("blockchain"),
-            "timestamp":     time.time(),
-            "transactions":  pending,
-            "previous_hash": ultimo["block_hash"]
-        }
-
-        data = json.dumps(block, sort_keys=True)
-        task_id = str(uuid.uuid4())
-
-        # Limpiar soluciones viejas
-        while True:
-            result = safe_basic_get('soluciones')
-            if result is None:
-                break
-            method, _, body = result
-            safe_basic_ack(method.delivery_tag)
-            if body is None:
-                break
-
-        # Publicar UNA tarea al TrP — él se encarga de subdividir
-        tarea_completa = {
-            "task_id":    task_id,
-            "difficulty": difficulty,
-            "data":       data,
-            "start":      0,
-            "end":        TOTAL
-        }
-        safe_basic_publish('tareas_pool', json.dumps(tarea_completa))
-
-        r.rpush("logs", json.dumps({
-            "timestamp":  time.time(),
-            "event":      "tarea_enviada_a_trp",
-            "task_id":    task_id,
-            "difficulty": difficulty
-        }))
-
-        # Esperar solución de cualquier worker
-        solucion = wait_for_solution(task_id, MINING_TIMEOUT_SECONDS, data=data, difficulty=difficulty)
-        if solucion is None:
-            raise HTTPException(status_code=504, detail="Timeout esperando una soluciÃ³n de minado")
-        nonce         = solucion["nonce"]
-        hash_recibido = solucion["hash"]
-
-        # Verificar contra la dificultad que le pedimos al worker. Si TrP la
-        # cambió mid-flight (fallback CPU on/off), la solución sigue siendo
-        # válida para el contrato original que firmamos en la tarea.
-        if not verify_hash(data, nonce, hash_recibido, difficulty):
-            r.rpush("logs", json.dumps({
-                "timestamp": time.time(),
-                "event":     "solucion_invalida",
-                "task_id":   task_id,
-                "nonce":     nonce,
-                "hash":      hash_recibido
-            }))
-            raise HTTPException(status_code=400, detail="La solución recibida no es válida")
-
-        block["nonce"]      = nonce
-        block["block_hash"] = hash_recibido
-
-        if not validate_block(block, ultimo["block_hash"]):
-            raise HTTPException(status_code=400, detail="El bloque no es coherente con la cadena")
-
-        save_block(block)
-        r.ltrim("pending_transactions", pending_count, -1)
-
-        r.rpush("logs", json.dumps({
-            "timestamp": time.time(),
-            "event":     "bloque_creado",
-            "task_id":   task_id,
-            "index":     block["index"],
-            "hash":      block["block_hash"]
-        }))
-        purge_stale_solutions(task_id)
-
-        return block
-
-    finally:
-        release_mining_lock(lock_token)
+# NOTA: el endpoint manual POST /create-block fue eliminado a propósito.
+# Razones:
+# - Duplicaba la lógica de minado de _mine_one_block() pero SIN aplicar los
+#   efectos ticket-aware (apply_confirmed_tx) ni marcar las ops CONFIRMED, así
+#   que dejaba mint/transfer colgados en PENDING para siempre (bug M1).
+# - Corría en el threadpool de FastAPI tocando la conexión pika compartida con
+#   el thread del auto-miner; pika.BlockingConnection no es thread-safe ni con
+#   RLock, así que llamarlo concurrente con el auto-miner corrompía el canal
+#   (bug M4).
+# El auto-miner (auto_miner_loop -> _mine_one_block) es ahora el único camino
+# de creación de bloques: dispara solo cuando hay pending y es el único hilo
+# que toca RabbitMQ.
 
 # Devolvemos toda la lista de Redis deserializada.
 @app.get("/blockchain")
@@ -869,6 +779,25 @@ def _mine_one_block():
     finally:
         release_mining_lock(lock_token)
 
+# ---------------------------------------------------------------------------
+# Logs janitor: thread de fondo que acota la lista "logs" de Redis.
+# La lista la escriben TODOS los servicios (NCT, TrP, workers) sobre la misma
+# key, así que un solo trimmer acá la mantiene acotada para todos. Es su propio
+# thread (no el del auto-miner) para que siga corriendo aún mientras un minado
+# bloquea por hasta MINING_TIMEOUT_SECONDS. Sin esto la lista crecía sin límite
+# y terminaba llenando la RAM de Redis -> OOM-kill -> se caía todo el sistema.
+# ---------------------------------------------------------------------------
+def logs_janitor_loop():
+    while True:
+        try:
+            r.ltrim("logs", -MAX_LOGS, -1)
+        except Exception as e:
+            print(f"[logs-janitor] error: {e}")
+        time.sleep(LOGS_TRIM_INTERVAL_SECONDS)
+
+_logs_janitor_thread = threading.Thread(target=logs_janitor_loop, daemon=True, name="logs-janitor")
+_logs_janitor_thread.start()
+
 # Lanzar el auto-miner solo en el proceso principal (uvicorn).
 _miner_thread = threading.Thread(target=auto_miner_loop, daemon=True, name="auto-miner")
 _miner_thread.start()
@@ -878,6 +807,15 @@ _miner_thread.start()
 def get_logs():
     logs = r.lrange("logs", 0, -1)
     return [json.loads(x) for x in logs]
+
+# Liveness: solo confirma que el proceso uvicorn responde. NO toca Redis a
+# propósito — si Redis está caído, el NCT no está "roto" (es Redis el que lo
+# está), así que no queremos que k8s reinicie el NCT en bucle. Para eso está
+# la readiness, que sí mira /status (saca al pod del Service mientras Redis no
+# responda, sin matarlo).
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 # Estado actual del sistema
 @app.get("/status")

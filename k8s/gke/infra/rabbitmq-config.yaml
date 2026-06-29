@@ -5,6 +5,14 @@ metadata:
   namespace: sdypp
 data:
   rabbitmq.conf: |
+    # rabbitmq:3 calcula el high watermark sobre la RAM del NODO, no del
+    # contenedor -> cree que tiene varios GB, nunca aplica backpressure y crece
+    # hasta el limit del cgroup (512Mi) -> OOM-Kill (bug C2).
+    # total_memory_available_override_value le dice cuanta RAM tiene REALMENTE
+    # (la del limit). Con eso, bloquea a los publishers en ~0.6*512MB = ~307MB,
+    # antes del OOM. Backpressure en vez de morir.
+    total_memory_available_override_value = 512MB
+    vm_memory_high_watermark.relative = 0.6
     listeners.tcp = none
     listeners.ssl.default = 5671
     ssl_options.cacertfile = /tls/rabbitmq-cert.pem

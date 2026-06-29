@@ -20,7 +20,13 @@ spec:
       containers:
         - name: redis
           image: redis:7
-          command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+          # --maxmemory por debajo del limit del cgroup (256Mi) para que Redis
+          # se autolimite ANTES de que el kernel lo OOM-killee. noeviction: si
+          # igual se llenara, los writes fallan ruidosamente en vez de evictar
+          # blockchain/op:*/ownership en silencio (esos datos NO se pueden
+          # perder). La fuga real (lista "logs") la acota el logs-janitor del
+          # NCT; esto es la red de seguridad de infra (bug C1).
+          command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--maxmemory", "200mb", "--maxmemory-policy", "noeviction"]
           ports:
             - containerPort: 6379
           resources:
