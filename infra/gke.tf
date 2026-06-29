@@ -72,3 +72,50 @@ resource "google_container_node_pool" "apps" {
     }
   }
 }
+
+# Node pool dedicado al stack de observabilidad (Prometheus, Grafana, Loki,
+# Tempo, Alloy, Alertmanager, exporters).
+#
+# Por qué un pool aparte y no meterlo en infra/apps:
+# - El stack LGTM pide ~2-3 GiB de RAM en total; los nodos infra/apps son
+#   e2-medium (4 GiB) y ya están al límite con Redis/RabbitMQ/Postgres/NCT.
+#   Apretarlo ahí causaría evicciones y falsos negativos en las propias
+#   métricas (el observador no puede competir por recursos con lo observado).
+# - on-demand (NO spot): si el nodo se va por preemption perdemos métricas y
+#   alertas justo cuando más las necesitamos. Es el único pool que paga
+#   on-demand a propósito — es el grueso del costo nuevo de esta feature.
+# - El taint impide que cargas de la app se programen acá; solo los pods del
+#   namespace observability (que declaran la toleration) aterrizan en este pool.
+resource "google_container_node_pool" "monitoring" {
+  name     = "monitoring"
+  location = var.zone
+  cluster  = google_container_cluster.primary.name
+
+  node_count = 1
+
+  node_config {
+    machine_type = "e2-standard-2" # 2 vCPU / 8 GiB — holgura para el LGTM
+    disk_type    = "pd-standard"
+    disk_size_gb = 50
+
+    labels = {
+      pool = "monitoring"
+    }
+
+    # Solo el stack de observabilidad tolera este taint (ver los manifests en
+    # k8s/gke/observability/, todos declaran la toleration correspondiente).
+    taint {
+      key    = "monitoring"
+      value  = "true"
+      effect = "NO_SCHEDULE"
+    }
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+    ]
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+  }
+}

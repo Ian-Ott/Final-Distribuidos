@@ -11,11 +11,20 @@ spec:
     metadata:
       labels:
         app: blockchain-worker
+      annotations:
+        # Métricas en 9000. OJO: este pod vive en el cluster del profesor; el
+        # Prometheus de GKE no lo alcanza por red. Para monitorearlo haría falta
+        # un agente local con remote_write (ver README de observabilidad).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
     spec:
       containers:
         - name: worker
           image: IMAGE_TAG
           command: ["python3", "worker.py"]
+          ports:
+            - name: metrics
+              containerPort: 9000
           env:
             - name: RABBITMQ_HOST
               value: "34.46.108.71"

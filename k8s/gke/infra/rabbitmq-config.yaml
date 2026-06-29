@@ -4,6 +4,11 @@ metadata:
   name: rabbitmq-config
   namespace: sdypp
 data:
+  # Habilita el plugin de management (ya venía con la imagen -management) y el de
+  # Prometheus, que expone /metrics en HTTP plano por el puerto 15692. Ese listener
+  # es independiente del AMQP TLS-only de abajo (listeners.tcp = none NO lo afecta).
+  enabled_plugins: |
+    [rabbitmq_management,rabbitmq_prometheus].
   rabbitmq.conf: |
     # rabbitmq:3 calcula el high watermark sobre la RAM del NODO, no del
     # contenedor -> cree que tiene varios GB, nunca aplica backpressure y crece

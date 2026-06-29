@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getPaymentInfo } from "@/lib/payments/mercadopago";
 import { submitTransfer } from "@/lib/nct/client";
+import { metrics } from "@/lib/observability/metrics";
 
 function classifyTransferError(err: unknown): "terminal" | "retryable" {
   const message = err instanceof Error ? err.message : String(err);
@@ -215,6 +216,7 @@ async function handleApproved(
       });
     }
 
+    metrics.paymentsConfirmed.inc();
     console.log(`[webhook] Payment ${payment.id} APPROVED (${reason}) → NCT op ${result.opRef}`);
     return NextResponse.json({ ok: true, nctOpRef: result.opRef });
   } catch (err) {

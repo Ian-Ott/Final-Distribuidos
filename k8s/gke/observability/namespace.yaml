@@ -1,0 +1,9 @@
+# Namespace propio para el stack de observabilidad, separado de `sdypp`.
+# Aísla RBAC, límites de recursos y ciclo de vida: se puede borrar todo el
+# monitoreo con `kubectl delete ns observability` sin tocar la app.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    name: observability

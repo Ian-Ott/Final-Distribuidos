@@ -76,7 +76,8 @@ validar tickets on-chain.
 | Blockchain | Python (FastAPI), Redis, RabbitMQ |
 | Minería GPU | CUDA C (compilado), workers Python |
 | Infraestructura | GKE (Google Kubernetes Engine), Terraform/OpenTofu |
-| CI/CD | GitHub Actions (4 pipelines) |
+| Observabilidad | Prometheus, Grafana, Loki, Tempo, Alloy (ver [`k8s/gke/observability/`](k8s/gke/observability/)) |
+| CI/CD | GitHub Actions (5 pipelines) |
 | Pagos | MercadoPago Checkout Pro |
 | Criptografía | ECDSA P-256, SHA-256, WebCrypto API |
 | HTTPS | GKE Managed Certificate, dominio `tesera.tech` |

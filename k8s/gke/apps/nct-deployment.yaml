@@ -28,6 +28,11 @@ spec:
     metadata:
       labels:
         app: blockchain-nct
+      annotations:
+        # El NCT expone /metrics en su mismo puerto HTTP (8000).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       nodeSelector:
         pool: apps

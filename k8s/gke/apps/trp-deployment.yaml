@@ -22,6 +22,10 @@ spec:
     metadata:
       labels:
         app: blockchain-trp
+      annotations:
+        # TrP no es HTTP: observability.start_metrics_server() abre /metrics en 9000.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
     spec:
       serviceAccountName: trp-sa
       nodeSelector:
@@ -29,6 +33,9 @@ spec:
       containers:
         - name: trp
           image: IMAGE_TAG
+          ports:
+            - name: metrics
+              containerPort: 9000
           resources:
             requests:
               cpu: 25m

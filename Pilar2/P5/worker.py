@@ -9,17 +9,29 @@ import uuid
 import logging
 import hashlib
 
+import observability as obs
+from prometheus_client import Counter, Histogram
+
 # Este worker no mina localmente: delega el cálculo pesado al servidor GPU
 # vía HTTP y solo reporta el resultado.
 
 # -------------------------
-# LOGGING
+# OBSERVABILIDAD
 # -------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+log = obs.setup_logging("worker-gpu")
+obs.setup_tracing("worker-gpu")
+obs.instrument_requests()  # las llamadas HTTP al gpu-server quedan trazadas
+obs.instrument_redis()
+tracer = obs.get_tracer("worker-gpu")
+obs.start_metrics_server()
+
+WORKER_TYPE = "gpu"
+WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
+WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
+WORKER_TASK_SECONDS = Histogram(
+    "worker_task_duration_seconds", "Duracion del minado de una sub-tarea (incluye HTTP a gpu-server)",
+    ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
 )
-log = logging.getLogger("worker-gpu")
 
 # Identificador único de este worker — antes no existía, por eso no había
 # forma de saber CUÁL réplica encontró la solución (acá solo hay una réplica
@@ -93,16 +105,27 @@ def callback(ch, method, properties, body):
         tarea = json.loads(body)
         log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
 
-        # 1. Delegamos el cálculo pesado al servidor central con GPU via HTTP
-        payload = {
-            "difficulty": tarea["difficulty"],
-            "data": tarea["data"],
-            "start": tarea["start"],
-            "end": tarea["end"]
-        }
-        response = requests.post(GPU_SERVER_URL, json=payload, timeout=60)
-        response.raise_for_status()
-        stdout_data = response.json().get("stdout", "")
+        # Continuamos la traza propagada por el TrP (contexto en el payload).
+        parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
+        span_cm = tracer.start_as_current_span("worker_mine_gpu", context=parent_ctx) \
+            if parent_ctx is not None else tracer.start_as_current_span("worker_mine_gpu")
+        with span_cm as span:
+            span.set_attribute("worker_id", WORKER_ID)
+            span.set_attribute("range_start", tarea["start"])
+            span.set_attribute("range_end", tarea["end"])
+            WORKER_TASKS.labels(worker_type=WORKER_TYPE).inc()
+
+            # 1. Delegamos el cálculo pesado al servidor central con GPU via HTTP
+            payload = {
+                "difficulty": tarea["difficulty"],
+                "data": tarea["data"],
+                "start": tarea["start"],
+                "end": tarea["end"]
+            }
+            with WORKER_TASK_SECONDS.labels(worker_type=WORKER_TYPE).time():
+                response = requests.post(GPU_SERVER_URL, json=payload, timeout=60)
+                response.raise_for_status()
+            stdout_data = response.json().get("stdout", "")
 
         nonce = None
         hash_resultado = None
@@ -127,6 +150,7 @@ def callback(ch, method, properties, body):
                 routing_key='soluciones',
                 body=json.dumps(solucion)
             )
+            WORKER_SOLUTIONS.labels(worker_type=WORKER_TYPE).inc()
             data_str = tarea.get("data", "")
             data_sha = hashlib.sha256(data_str.encode()).hexdigest() if data_str else "EMPTY"
             verify_calc = hashlib.md5((data_str + str(nonce)).encode()).hexdigest()

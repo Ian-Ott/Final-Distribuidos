@@ -8,7 +8,25 @@ import time
 import threading
 import os
 
+import observability as obs
+from prometheus_client import Counter, Histogram
+
+# --- Observabilidad ---------------------------------------------------------
+log = obs.setup_logging("gpu-server")
+obs.setup_tracing("gpu-server")
+
+GPU_MINE_REQUESTS = Counter("gpu_mine_requests_total", "Pedidos de minado recibidos por el gpu-server")
+GPU_SOLUTIONS = Counter("gpu_solutions_found_total", "Pedidos en los que el binario CUDA encontro nonce")
+GPU_MINE_SECONDS = Histogram(
+    "gpu_mine_duration_seconds", "Duracion de la corrida del binario CUDA",
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+)
+
 app = FastAPI()
+_metrics_app = obs.metrics_asgi_app()
+if _metrics_app is not None:
+    app.mount("/metrics", _metrics_app)
+obs.instrument_fastapi(app)
 
 # -------------------------
 # CONEXIÓN A RABBITMQ (para el heartbeat)
@@ -30,10 +48,10 @@ def connect_rabbitmq():
                     ssl_options=rabbitmq_ssl_context(),
                 )
             )
-            print("gpu-server conectado a RabbitMQ (TLS)")
+            log.info("gpu-server conectado a RabbitMQ (TLS)")
             return conn
         except Exception:
-            print("Esperando RabbitMQ...")
+            log.warning("Esperando RabbitMQ...")
             time.sleep(3)
 
 # -------------------------
@@ -93,20 +111,24 @@ def select_binary(gpu):
 
 @app.post("/mine")
 def mine(req: MineRequest):
-
+    GPU_MINE_REQUESTS.inc()
     gpu = get_gpu_name()
     binary = select_binary(gpu)
 
-    result = subprocess.run(
-        [
-            binary,
-            req.data,
-            req.difficulty,
-            str(req.start),
-            str(req.end)
-        ],
-        capture_output=True,
-        text=True
-    )
+    with GPU_MINE_SECONDS.time():
+        result = subprocess.run(
+            [
+                binary,
+                req.data,
+                req.difficulty,
+                str(req.start),
+                str(req.end)
+            ],
+            capture_output=True,
+            text=True
+        )
+
+    if "Nonce encontrado:" in (result.stdout or ""):
+        GPU_SOLUTIONS.inc()
 
     return {"stdout": result.stdout}

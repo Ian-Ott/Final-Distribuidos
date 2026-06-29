@@ -1,0 +1,149 @@
+# ============================================================================
+# Grafana: la UI única de los 3 pilares.
+#
+# Datasources provisionados por código (Prometheus, Loki, Tempo) — no hay que
+# configurarlos a mano. Tempo queda correlacionado con Loki para saltar de una
+# traza a sus logs y viceversa.
+#
+# Acceso: por defecto NO se expone públicamente. Se accede con
+#   kubectl -n observability port-forward svc/grafana 3001:3000
+# Credenciales iniciales admin / admin (cambiar; o setear GF_SECURITY_ADMIN_*
+# desde un Secret). Para exponerlo con Ingress propio, ver el README.
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://prometheus.observability.svc.cluster.local:9090
+        isDefault: true
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.observability.svc.cluster.local:3100
+        jsonData:
+          # Permite saltar de un log a su traza: detecta trace_id en la línea.
+          derivedFields:
+            - datasourceUid: tempo
+              matcherRegex: '"trace_id":"(\w+)"'
+              name: TraceID
+              url: '$${__value.raw}'
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        url: http://tempo.observability.svc.cluster.local:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            filterByTraceID: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: observability
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: tesera
+        orgId: 1
+        folder: Tesera
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      nodeSelector:
+        pool: monitoring
+      tolerations:
+        - key: monitoring
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.2
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            # Habilita el panel de Traces y exploración de Tempo.
+            - name: GF_FEATURE_TOGGLES_ENABLE
+              value: traceqlEditor
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  type: ClusterIP
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000

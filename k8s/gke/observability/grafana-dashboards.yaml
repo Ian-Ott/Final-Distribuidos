@@ -1,0 +1,82 @@
+# Dashboards de Grafana provisionados como archivos. Cada key del ConfigMap se
+# monta como un .json en /var/lib/grafana/dashboards y el provider los carga.
+# Mantener el JSON acá embebido es lo que permite versionarlos en git junto al
+# resto de los manifests (en vez de configurarlos a mano en la UI).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: observability
+data:
+  blockchain.json: |
+    {
+      "uid": "tesera-blockchain",
+      "title": "Tesera — Blockchain & Minería",
+      "tags": ["tesera", "blockchain"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": "Bloques en la cadena",
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "max(nct_blockchain_length)", "refId": "A" } ]
+        },
+        {
+          "id": 2, "type": "stat", "title": "TX pendientes",
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "thresholds": { "steps": [
+            { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 20 } ] } } },
+          "targets": [ { "expr": "max(nct_pending_transactions)", "refId": "A" } ]
+        },
+        {
+          "id": 3, "type": "stat", "title": "Dificultad (ceros)",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "max(nct_difficulty_zeros)", "refId": "A" } ]
+        },
+        {
+          "id": 4, "type": "stat", "title": "GPU viva / Fallback CPU",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "mappings": [
+            { "type": "value", "options": { "0": { "text": "NO", "color": "red" }, "1": { "text": "SÍ", "color": "green" } } } ] } },
+          "targets": [
+            { "expr": "max(trp_gpu_alive)", "refId": "A", "legendFormat": "GPU viva" },
+            { "expr": "max(trp_fallback_active)", "refId": "B", "legendFormat": "Fallback CPU" }
+          ]
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "Bloques minados (por minuto)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "sum(rate(nct_blocks_total[5m])) * 60", "refId": "A", "legendFormat": "bloques/min" } ]
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Tiempo de minado de bloque (p50 / p95)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum(rate(nct_block_mining_seconds_bucket[5m])) by (le))", "refId": "A", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, sum(rate(nct_block_mining_seconds_bucket[5m])) by (le))", "refId": "B", "legendFormat": "p95" }
+          ]
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "Soluciones encontradas por tipo de worker",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "sum by (worker_type) (rate(worker_solutions_found_total[5m]))", "refId": "A", "legendFormat": "{{worker_type}}" } ]
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "Soluciones rechazadas por el NCT (por motivo)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [ { "expr": "sum by (reason) (rate(nct_solutions_rejected_total[5m]))", "refId": "A", "legendFormat": "{{reason}}" } ]
+        }
+      ]
+    }

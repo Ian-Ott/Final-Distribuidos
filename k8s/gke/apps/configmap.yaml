@@ -19,3 +19,11 @@ data:
   # MercadoPago — el access token vive en el Secret app-secrets.
   # En prod cambiar a https://tesera.tech.
   MP_PUBLIC_URL: "https://tesera.tech"
+
+  # --- Observabilidad ---
+  # Trazas OTLP del frontend (@vercel/otel usa OTLP HTTP → puerto 4318 de Alloy).
+  # Los servicios Python usan gRPC 4317 por defecto (ver observability.py), no
+  # necesitan esta env. Para deshabilitar trazas: OTEL_SDK_DISABLED=true.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability.svc.cluster.local:4318"
+  OTEL_SERVICE_NAME: "frontend"
+  LOG_LEVEL: "INFO"

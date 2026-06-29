@@ -1,0 +1,55 @@
+name: "Pipeline 5 - Observabilidad"
+
+# Despliega el stack de observabilidad (Prometheus, Grafana, Loki, Tempo, Alloy,
+# Alertmanager, exporters) al cluster GKE. Corre al cambiar sus manifests o a mano.
+#
+# Requisito: el node pool `monitoring` debe existir (lo crea Pipeline 1 / OpenTofu
+# al aplicar infra/gke.tf). Sin ese pool, los pods quedan Pending por el taint.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "k8s/gke/observability/**"
+      - ".github/workflows/pipeline-5-observability.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  gitleaks:
+    uses: ./.github/workflows/gitleaks.yml
+
+  deploy-observability:
+    name: Deploy stack LGTM
+    needs: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      # Namespace y RBAC primero: el resto de los recursos viven en el ns
+      # `observability` y kubectl apply -f <dir> ordena por nombre de archivo,
+      # así que sin esto algunos objetos se aplicarían antes de existir el ns.
+      - name: Namespace + RBAC
+        run: |
+          kubectl apply -f k8s/gke/observability/namespace.yaml
+          kubectl apply -f k8s/gke/observability/rbac.yaml
+
+      - name: Deploy stack
+        run: kubectl apply -f k8s/gke/observability/
+
+      - name: Esperar rollout de Grafana/Prometheus
+        run: |
+          kubectl -n observability rollout status deploy/prometheus --timeout=180s
+          kubectl -n observability rollout status deploy/grafana --timeout=180s

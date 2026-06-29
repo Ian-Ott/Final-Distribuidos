@@ -12,12 +12,18 @@ spec:
     metadata:
       labels:
         app: blockchain-worker-cpu
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
     spec:
       nodeSelector:
         pool: apps
       containers:
         - name: worker-cpu
           image: IMAGE_TAG
+          ports:
+            - name: metrics
+              containerPort: 9000
           resources:
             requests:
               cpu: 25m

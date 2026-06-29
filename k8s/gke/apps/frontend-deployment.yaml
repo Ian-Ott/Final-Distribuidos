@@ -12,6 +12,11 @@ spec:
     metadata:
       labels:
         app: frontend
+      annotations:
+        # El frontend expone /api/metrics (prom-client) en su puerto 3000.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/metrics"
     spec:
       nodeSelector:
         pool: apps

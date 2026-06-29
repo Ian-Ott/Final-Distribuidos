@@ -8,17 +8,26 @@ import logging
 import ssl
 import urllib.request
 
-# TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers. 
+import observability as obs
+from prometheus_client import Counter, Gauge
+
+# TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers.
 # El NCT dice "minà este bloque", y el TrP se encarga de dividir ese trabajo, distribuirlo, y decidir si hay que cambiar de modo GPU a CPU.
 
 # -------------------------
-# LOGGING
+# OBSERVABILIDAD (logging JSON + métricas + trazas)
 # -------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-log = logging.getLogger("trp")
+log = obs.setup_logging("trp")
+obs.setup_tracing("trp")
+obs.instrument_redis()
+tracer = obs.get_tracer("trp")
+obs.start_metrics_server()  # /metrics en METRICS_PORT (default 9000)
+
+TRP_TASKS = Counter("trp_tasks_subdivided_total", "Tareas del NCT subdivididas")
+TRP_CHUNKS = Counter("trp_chunks_published_total", "Sub-tareas (chunks) publicadas a los workers")
+TRP_FALLBACK_ACTIVE = Gauge("trp_fallback_active", "1 si el fallback a CPU esta activo")
+TRP_GPU_ALIVE = Gauge("trp_gpu_alive", "1 si el gpu-server tiene heartbeat vivo")
+TRP_SCALE_EVENTS = Counter("trp_cpu_scale_events_total", "Eventos de escalado de worker-cpu", ["action"])
 
 # -------------------------
 # CONEXIONES
@@ -97,9 +106,9 @@ def scale_cpu_workers(replicas: int):
             },
         )
         urllib.request.urlopen(req, context=ctx, timeout=10)
-        print(f"[TrP] worker-cpu escalado a {replicas} réplicas")
+        log.info(f"worker-cpu escalado a {replicas} réplicas")
     except Exception as e:
-        print(f"[TrP] Error escalando worker-cpu: {e}")
+        log.error(f"Error escalando worker-cpu: {e}")
 
 def heartbeat_consumer():
     """Consume mensajes de la cola heartbeat_gpu y actualiza Redis.
@@ -169,6 +178,7 @@ def activate_fallback():
         "difficulty_anterior": original,
         "difficulty_nueva": FALLBACK_DIFFICULTY,
     }))
+    TRP_SCALE_EVENTS.labels(action="scale_up").inc()
     scale_cpu_workers(CPU_WORKER_REPLICAS)
     return True
 
@@ -186,6 +196,7 @@ def restore_from_fallback():
         "event": "fallback_cpu_restaurado",
         "difficulty_restaurada": original,
     }))
+    TRP_SCALE_EVENTS.labels(action="scale_down").inc()
     scale_cpu_workers(0)
     return True
 
@@ -194,6 +205,9 @@ def monitor_loop():
         try:
             gpu_alive = is_gpu_server_alive()
             in_fallback = r.exists(FALLBACK_MODE_KEY) == 1
+            # Reflejar el estado en Prometheus en cada iteración.
+            TRP_GPU_ALIVE.set(1 if gpu_alive else 0)
+            TRP_FALLBACK_ACTIVE.set(1 if in_fallback else 0)
             if not gpu_alive and not in_fallback:
                 activate_fallback()
             elif gpu_alive and in_fallback:
@@ -225,26 +239,38 @@ def subdivide_and_publish(tarea: dict):
     total_range = end - start
     n_chunks    = math.ceil(total_range / CHUNK_SIZE)
 
-    log.info(f"Subdividiendo tarea en {n_chunks} chunks (dificultad: {difficulty})")
+    # Continuamos la traza que arrancó el NCT (contexto embebido en el payload).
+    parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
+    span_cm = tracer.start_as_current_span("trp_subdivide", context=parent_ctx) \
+        if parent_ctx is not None else tracer.start_as_current_span("trp_subdivide")
+    with span_cm as span:
+        span.set_attribute("task_id", str(task_id))
+        span.set_attribute("chunks", n_chunks)
+        log.info(f"Subdividiendo tarea en {n_chunks} chunks (dificultad: {difficulty})")
 
-    for i in range(n_chunks):
-        chunk_start = start + i * CHUNK_SIZE
-        chunk_end   = min(chunk_start + CHUNK_SIZE - 1, end)
+        # El contexto a propagar a los workers se toma del span actual.
+        trace_ctx = obs.inject_trace_context()
+        for i in range(n_chunks):
+            chunk_start = start + i * CHUNK_SIZE
+            chunk_end   = min(chunk_start + CHUNK_SIZE - 1, end)
 
-        subtarea = {
-            "task_id":    task_id,
-            "difficulty": difficulty,
-            "data":       data,
-            "start":      chunk_start,
-            "end":        chunk_end
-        }
+            subtarea = {
+                "task_id":    task_id,
+                "difficulty": difficulty,
+                "data":       data,
+                "start":      chunk_start,
+                "end":        chunk_end,
+                "_trace":     trace_ctx,
+            }
 
-        channel.basic_publish(
-            exchange='',
-            routing_key='tareas',
-            body=json.dumps(subtarea)
-        )
+            channel.basic_publish(
+                exchange='',
+                routing_key='tareas',
+                body=json.dumps(subtarea)
+            )
+            TRP_CHUNKS.inc()
 
+    TRP_TASKS.inc()
     r.rpush("logs", json.dumps({
         "timestamp": time.time(),
         "event":     "trp_subdividio_tarea",

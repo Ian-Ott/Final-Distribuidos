@@ -8,18 +8,29 @@ import threading
 import hashlib
 import logging
 
+import observability as obs
+from prometheus_client import Counter, Histogram
+
 # Este archivo es un minero de GPU... digo, de CPU.
 # Su único trabajo es recibir un desafío matemático, resolverlo por fuerza bruta, y reportar la solución.
 # No sabe nada de bloques, transacciones ni blockchain — solo mina
 
 # -------------------------
-# LOGGING
+# OBSERVABILIDAD
 # -------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+log = obs.setup_logging("worker-cpu")
+obs.setup_tracing("worker-cpu")
+obs.instrument_redis()
+tracer = obs.get_tracer("worker-cpu")
+obs.start_metrics_server()
+
+WORKER_TYPE = "cpu"
+WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
+WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
+WORKER_TASK_SECONDS = Histogram(
+    "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
+    ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
 )
-log = logging.getLogger("worker-cpu")
 
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
@@ -118,12 +129,22 @@ def callback(ch, method, properties, body):
 
         log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
 
-        nonce, hash_resultado = mine_cpu(
-            tarea["data"],
-            tarea["difficulty"],
-            tarea["start"],
-            tarea["end"]
-        )
+        # Continuamos la traza propagada por el TrP (contexto en el payload).
+        parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
+        span_cm = tracer.start_as_current_span("worker_mine_cpu", context=parent_ctx) \
+            if parent_ctx is not None else tracer.start_as_current_span("worker_mine_cpu")
+        with span_cm as span:
+            span.set_attribute("worker_id", WORKER_ID)
+            span.set_attribute("range_start", tarea["start"])
+            span.set_attribute("range_end", tarea["end"])
+            WORKER_TASKS.labels(worker_type=WORKER_TYPE).inc()
+            with WORKER_TASK_SECONDS.labels(worker_type=WORKER_TYPE).time():
+                nonce, hash_resultado = mine_cpu(
+                    tarea["data"],
+                    tarea["difficulty"],
+                    tarea["start"],
+                    tarea["end"]
+                )
 
         if nonce is not None:
             channel.basic_publish(
@@ -135,6 +156,7 @@ def callback(ch, method, properties, body):
                     "hash": hash_resultado,
                 })
             )
+            WORKER_SOLUTIONS.labels(worker_type=WORKER_TYPE).inc()
             log.info(f"[{WORKER_ID}] Nonce encontrado: {nonce}")
             log_event(
                 "solucion_encontrada",

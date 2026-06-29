@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
+import { metrics } from "@/lib/observability/metrics";
 
 // ============================================================================
 // Tipos públicos
@@ -82,6 +83,7 @@ function nctTicketId(eventId: string, ticketNumber: number): string {
 // ============================================================================
 
 export async function submitMintBatch(input: MintBatchInput): Promise<OperationResult> {
+  metrics.nctOperations.inc({ kind: "mint", result: "submitted" });
   if (isMockMode()) {
     const scheduledConfirmAt = new Date(Date.now() + mockDelayMs());
     const op = await prisma.nctOperation.create({
@@ -146,6 +148,7 @@ export async function submitMintBatch(input: MintBatchInput): Promise<OperationR
 }
 
 export async function submitTransfer(input: TransferInput): Promise<OperationResult> {
+  metrics.nctOperations.inc({ kind: "transfer", result: "submitted" });
   if (isMockMode()) {
     const ticket = await prisma.ticket.findUnique({ where: { id: input.ticketId } });
     if (!ticket) throw new Error("ticket_not_found");

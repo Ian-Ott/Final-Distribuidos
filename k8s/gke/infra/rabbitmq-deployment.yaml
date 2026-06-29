@@ -14,6 +14,10 @@ spec:
     metadata:
       labels:
         app: rabbitmq
+      annotations:
+        # El plugin rabbitmq_prometheus expone /metrics en 15692 (HTTP plano).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "15692"
     spec:
       nodeSelector:
         pool: infra
@@ -23,6 +27,7 @@ spec:
           ports:
             - containerPort: 5671
             - containerPort: 15671
+            - containerPort: 15692 # métricas Prometheus
           volumeMounts:
             - name: tls
               mountPath: /tls
@@ -30,6 +35,9 @@ spec:
             - name: config
               mountPath: /etc/rabbitmq/rabbitmq.conf
               subPath: rabbitmq.conf
+            - name: config
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
           resources:
             requests:
               cpu: 25m

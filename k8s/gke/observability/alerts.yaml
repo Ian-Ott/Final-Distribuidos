@@ -1,0 +1,182 @@
+# ============================================================================
+# Reglas de alerta (las evalúa Prometheus, las rutea Alertmanager).
+#
+# Este ConfigMap se monta en Prometheus como /etc/prometheus/rules/*.yml
+# (ver prometheus.yaml). Las reglas cubren los modos de falla propios de este
+# sistema distribuido, no solo "el pod se cayó".
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: observability
+data:
+  alerts.yml: |
+    groups:
+      - name: blockchain
+        rules:
+          - alert: GPUServerCaido
+            expr: max(trp_gpu_alive) == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "El gpu-server no manda heartbeat hace >2m"
+              description: "El TrP dejó de ver vivo al gpu-server. Debería haber activado el fallback a CPU; verificar que worker-cpu escaló."
+
+          - alert: FallbackCPUProlongado
+            expr: max(trp_fallback_active) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "El sistema lleva >10m minando en CPU (fallback)"
+              description: "El fallback a CPU sigue activo. Si no es esperado, revisar por qué no vuelve la GPU."
+
+          - alert: BlockchainEstancada
+            expr: increase(nct_blocks_total[10m]) == 0 and max(nct_pending_transactions) > 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Hay transacciones pendientes pero no se minan bloques"
+              description: "nct_pending_transactions>0 y nct_blocks_total no avanza hace 10m. Posible cuelgue del auto-miner o de los workers."
+
+          - alert: MuchosTimeoutsDeMinado
+            expr: increase(nct_mining_timeouts_total[10m]) > 2
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Varios timeouts de minado en los últimos 10m"
+              description: "El NCT está timeouteando esperando soluciones. Workers lentos/caídos o dificultad demasiado alta."
+
+      - name: infra
+        rules:
+          - alert: RedisCaido
+            expr: redis_up == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis no responde"
+              description: "redis_up==0. Redis es el cerebro del sistema (blockchain, ownership, locks): todo se degrada sin él."
+
+          - alert: PostgresCaido
+            expr: pg_up == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Postgres no responde"
+              description: "pg_up==0. La app web no puede servir requests (login, eventos, pagos)."
+
+          - alert: ColaRabbitMQCreciente
+            expr: sum(rabbitmq_queue_messages{queue="tareas"}) > 50
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "La cola 'tareas' crece sin consumirse"
+              description: "Más de 50 mensajes en 'tareas' por >10m: los workers no dan abasto o están caídos."
+
+      - name: kubernetes
+        rules:
+          - alert: PodCrashLoop
+            expr: increase(kube_pod_container_status_restarts_total{namespace=~"sdypp|observability"}[15m]) > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.pod }} reiniciando en loop"
+              description: "{{ $labels.namespace }}/{{ $labels.pod }} reinició >3 veces en 15m."
+
+          - alert: TargetCaido
+            expr: up == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Target {{ $labels.job }} ({{ $labels.pod }}) no scrapeable"
+              description: "Prometheus no puede scrapear {{ $labels.job }} hace >5m."
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: observability
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: default
+      group_by: ["alertname", "severity"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 3h
+    receivers:
+      - name: default
+        # Por defecto las alertas solo se ven en la UI de Alertmanager/Grafana.
+        # Para notificar a Discord/Slack, descomentar y completar el webhook:
+        # webhook_configs:
+        #   - url: "https://discord.com/api/webhooks/XXX/slack"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: observability
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      nodeSelector:
+        pool: monitoring
+      tolerations:
+        - key: monitoring
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+          ports:
+            - containerPort: 9093
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 96Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: observability
+spec:
+  type: ClusterIP
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093

@@ -17,7 +17,34 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.exceptions import InvalidSignature
 
+import observability as obs
+from prometheus_client import Counter, Gauge, Histogram
+
 # API REST que expone endpoints para el mundo exterior y coordina todo el proceso de creación de bloques.
+
+# --- Observabilidad ---------------------------------------------------------
+log = obs.setup_logging("nct")
+obs.setup_tracing("nct")
+obs.instrument_requests()
+obs.instrument_redis()
+tracer = obs.get_tracer("nct")
+
+# Métricas de dominio. Se incrementan en los mismos puntos donde ya se escribe
+# a la lista "logs" de Redis, así toda señal de negocio queda también en Prometheus.
+NCT_BLOCKS = Counter("nct_blocks_total", "Bloques minados y confirmados")
+NCT_MINING_SECONDS = Histogram(
+    "nct_block_mining_seconds",
+    "Tiempo desde que se publica la tarea hasta que llega una solucion valida",
+    buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120, 180),
+)
+NCT_TX_RECEIVED = Counter("nct_transactions_received_total", "Transacciones recibidas", ["tx_type"])
+NCT_SOLUTIONS_REJECTED = Counter("nct_solutions_rejected_total", "Soluciones descartadas por el NCT", ["reason"])
+NCT_MINING_TIMEOUTS = Counter("nct_mining_timeouts_total", "Veces que el minado supero el timeout")
+NCT_PENDING_TX = Gauge("nct_pending_transactions", "Transacciones pendientes de minar")
+NCT_BLOCKCHAIN_LEN = Gauge("nct_blockchain_length", "Cantidad de bloques en la cadena")
+NCT_DIFFICULTY_ZEROS = Gauge("nct_difficulty_zeros", "Ceros de dificultad exigidos actualmente")
+NCT_MINING_ACTIVE = Gauge("nct_mining_active", "1 si una replica tiene el lock de minado tomado")
+
 
 def connect_redis():
     while True:
@@ -26,12 +53,17 @@ def connect_redis():
             client.ping()
             return client
         except Exception:
-            print("Esperando Redis...")
+            log.warning("Esperando Redis...")
             time.sleep(3)
 
 r = connect_redis()
 
 app = FastAPI()
+# /metrics para que Prometheus scrapee al NCT en su mismo puerto (8000).
+_metrics_app = obs.metrics_asgi_app()
+if _metrics_app is not None:
+    app.mount("/metrics", _metrics_app)
+obs.instrument_fastapi(app)
 RABBIT_HEARTBEAT_SECONDS = int(os.getenv("RABBIT_HEARTBEAT_SECONDS", "180"))
 RABBIT_KEEPALIVE_INTERVAL_SECONDS = int(os.getenv("RABBIT_KEEPALIVE_INTERVAL_SECONDS", "15"))
 
@@ -55,7 +87,7 @@ def connect_rabbitmq():
             )
             return connection
         except Exception:
-            print("Esperando RabbitMQ...")
+            log.warning("Esperando RabbitMQ...")
             time.sleep(3)
 
 connection = connect_rabbitmq()
@@ -73,7 +105,7 @@ def ensure_connection():
                 raise Exception("conexion cerrada")
             connection.process_data_events(time_limit=0)
         except Exception:
-            print("Conexión a RabbitMQ perdida, reconectando...")
+            log.warning("Conexión a RabbitMQ perdida, reconectando...")
             try:
                 connection.close()
             except Exception:
@@ -91,7 +123,7 @@ def safe_basic_get(queue: str):
         try:
             result = channel.basic_get(queue=queue, auto_ack=False)
         except Exception as e:
-            print(f"Error en basic_get, reconectando: {e}")
+            log.warning(f"Error en basic_get, reconectando: {e}")
             ensure_connection()
             result = channel.basic_get(queue=queue, auto_ack=False)
         method, properties, body = result
@@ -107,7 +139,7 @@ def safe_basic_publish(routing_key: str, body: str):
         try:
             channel.basic_publish(exchange='', routing_key=routing_key, body=body)
         except Exception as e:
-            print(f"Error en basic_publish, reconectando: {e}")
+            log.warning(f"Error en basic_publish, reconectando: {e}")
             ensure_connection()
             channel.basic_publish(exchange='', routing_key=routing_key, body=body)
 
@@ -174,6 +206,7 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
                     solucion = json.loads(body)
                 except json.JSONDecodeError:
                     safe_basic_ack(method.delivery_tag)
+                    NCT_SOLUTIONS_REJECTED.labels(reason="invalid_json").inc()
                     r.rpush("logs", json.dumps({
                         "timestamp": time.time(),
                         "event": "solucion_descartada",
@@ -185,6 +218,7 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
                 solution_task_id = solucion.get("task_id")
                 if solution_task_id != task_id:
                     safe_basic_ack(method.delivery_tag)
+                    NCT_SOLUTIONS_REJECTED.labels(reason="stale_task").inc()
                     r.rpush("logs", json.dumps({
                         "timestamp": time.time(),
                         "event": "solucion_descartada",
@@ -198,6 +232,7 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
                     hash_recibido = solucion.get("hash")
                     if not verify_hash(data, nonce, hash_recibido, difficulty):
                         safe_basic_ack(method.delivery_tag)
+                        NCT_SOLUTIONS_REJECTED.labels(reason="invalid_pow").inc()
                         r.rpush("logs", json.dumps({
                             "timestamp": time.time(),
                             "event": "solucion_descartada",
@@ -220,6 +255,7 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
 
         time.sleep(MINING_POLL_INTERVAL_SECONDS)
 
+    NCT_MINING_TIMEOUTS.inc()
     r.rpush("logs", json.dumps({
         "timestamp": time.time(),
         "event": "minado_timeout",
@@ -362,6 +398,7 @@ def save_block(block: dict):
 @app.post("/transaction")
 def transaction(tx: Transaction):
     transaccion = tx.dict()
+    NCT_TX_RECEIVED.labels(tx_type="legacy").inc()
     r.rpush("pending_transactions", json.dumps(transaccion))
 
     r.rpush("logs", json.dumps({
@@ -550,7 +587,9 @@ def mark_operation_failed(op_id: str, error_code: str):
 @app.post("/tx/mint", status_code=202)
 def tx_mint(tx: MintTx):
     if not verify_signature(tx.organizer_pubkey, tx.signed_payload, tx.signature):
+        NCT_SOLUTIONS_REJECTED.labels(reason="mint_bad_signature").inc()
         raise HTTPException(status_code=400, detail="invalid_signature")
+    NCT_TX_RECEIVED.labels(tx_type="mint").inc()
     op_id = tx.op_id or f"op-{uuid.uuid4().hex[:12]}"
     record = {
         "op_id": op_id,
@@ -585,6 +624,7 @@ def tx_transfer(tx: TransferTx):
         raise HTTPException(status_code=404, detail="ticket_not_found")
     if current_owner != tx.from_pubkey:
         raise HTTPException(status_code=409, detail="not_current_owner")
+    NCT_TX_RECEIVED.labels(tx_type="transfer").inc()
     op_id = tx.op_id or f"op-{uuid.uuid4().hex[:12]}"
     record = {
         "op_id": op_id,
@@ -645,14 +685,14 @@ def auto_miner_loop():
             try:
                 _mine_one_block()
             except Exception as e:
-                print(f"[auto-miner] error: {e}")
+                log.error(f"[auto-miner] error: {e}")
                 r.rpush("logs", json.dumps({
                     "timestamp": time.time(),
                     "event": "auto_miner_error",
                     "error": str(e),
                 }))
         except Exception as e:
-            print(f"[auto-miner] loop error: {e}")
+            log.error(f"[auto-miner] loop error: {e}")
             r.rpush("logs", json.dumps({
                 "timestamp": time.time(),
                 "event": "auto_miner_loop_error",
@@ -665,7 +705,13 @@ def _mine_one_block():
     lock_token = acquire_mining_lock()
     if lock_token is None:
         return None
+    NCT_MINING_ACTIVE.set(1)
 
+    # Span raíz de la operación de minado. Todo lo que pase de acá en adelante
+    # (incluido el viaje por TrP y los workers) cuelga de esta traza gracias a
+    # la propagación del contexto que inyectamos en el payload de la tarea.
+    mining_span_cm = tracer.start_as_current_span("mine_block")
+    mining_span = mining_span_cm.__enter__()
     try:
         pending_raw = r.lrange("pending_transactions", 0, -1)
         if len(pending_raw) == 0:
@@ -682,6 +728,8 @@ def _mine_one_block():
         }
         data = json.dumps(block, sort_keys=True)
         task_id = str(uuid.uuid4())
+        mining_span.set_attribute("task_id", task_id)
+        mining_span.set_attribute("tx_count", pending_count)
 
         while True:
             result = safe_basic_get('soluciones')
@@ -698,7 +746,11 @@ def _mine_one_block():
             "data": data,
             "start": 0,
             "end": TOTAL,
+            # Contexto de traza W3C embebido en el payload: TrP lo extrae y
+            # continúa la misma traza al subdividir/publicar a los workers.
+            "_trace": obs.inject_trace_context(),
         }
+        mine_start = time.time()
         safe_basic_publish('tareas_pool', json.dumps(tarea_completa))
 
         # Esperar solución.
@@ -748,6 +800,9 @@ def _mine_one_block():
         r.ltrim("pending_transactions", pending_count, -1)
 
         confirmed_at = time.time()
+        NCT_BLOCKS.inc()
+        NCT_MINING_SECONDS.observe(confirmed_at - mine_start)
+        mining_span.set_attribute("block_index", block["index"])
         r.rpush("logs", json.dumps({
             "timestamp": confirmed_at,
             "event": "bloque_creado",
@@ -777,6 +832,8 @@ def _mine_one_block():
         purge_stale_solutions(task_id)
         return block
     finally:
+        NCT_MINING_ACTIVE.set(0)
+        mining_span_cm.__exit__(None, None, None)
         release_mining_lock(lock_token)
 
 # ---------------------------------------------------------------------------
@@ -792,11 +849,31 @@ def logs_janitor_loop():
         try:
             r.ltrim("logs", -MAX_LOGS, -1)
         except Exception as e:
-            print(f"[logs-janitor] error: {e}")
+            log.error(f"[logs-janitor] error: {e}")
         time.sleep(LOGS_TRIM_INTERVAL_SECONDS)
 
 _logs_janitor_thread = threading.Thread(target=logs_janitor_loop, daemon=True, name="logs-janitor")
 _logs_janitor_thread.start()
+
+# Thread que refleja en Prometheus el estado que vive en Redis. Estos son
+# gauges (valores instantáneos), no eventos, así que en vez de instrumentar
+# cada endpoint los muestreamos cada pocos segundos desde una sola fuente.
+METRICS_REFRESH_SECONDS = int(os.getenv("METRICS_REFRESH_SECONDS", "5"))
+
+def metrics_updater_loop():
+    while True:
+        try:
+            NCT_PENDING_TX.set(r.llen("pending_transactions"))
+            NCT_BLOCKCHAIN_LEN.set(r.llen("blockchain"))
+            diff = r.get("difficulty") or ""
+            NCT_DIFFICULTY_ZEROS.set(len(diff))
+            NCT_MINING_ACTIVE.set(1 if r.exists("minando") else 0)
+        except Exception as e:
+            log.warning(f"[metrics-updater] error: {e}")
+        time.sleep(METRICS_REFRESH_SECONDS)
+
+_metrics_updater_thread = threading.Thread(target=metrics_updater_loop, daemon=True, name="metrics-updater")
+_metrics_updater_thread.start()
 
 # Lanzar el auto-miner solo en el proceso principal (uvicorn).
 _miner_thread = threading.Thread(target=auto_miner_loop, daemon=True, name="auto-miner")

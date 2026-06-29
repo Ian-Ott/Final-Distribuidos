@@ -11,6 +11,11 @@ spec:
     metadata:
       labels:
         app: blockchain-gpu-server
+      annotations:
+        # /metrics en el mismo 8000. Mismo caveat cross-cluster que el worker GPU.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: gpu-server

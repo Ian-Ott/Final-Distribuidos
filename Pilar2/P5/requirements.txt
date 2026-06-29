@@ -4,3 +4,13 @@ pika
 redis
 requests
 cryptography
+# --- Observabilidad ---
+# Métricas (Prometheus): expone /metrics en cada servicio.
+prometheus-client
+# Trazas (OpenTelemetry → Tempo). Si se quiere una imagen mínima sin tracing,
+# estas se pueden omitir: observability.py degrada a no-op si faltan.
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-requests
+opentelemetry-instrumentation-redis

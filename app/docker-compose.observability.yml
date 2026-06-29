@@ -1,0 +1,76 @@
+# Stack de observabilidad para desarrollo/demostración local.
+#
+# Uso (desde app/):
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up
+#
+# Levanta Prometheus, Grafana, Loki, Tempo y Alloy junto al frontend, y le
+# inyecta al `app` el endpoint OTLP para que emita trazas. Permite ver los 3
+# pilares sin tener el cluster GKE.
+#
+# Accesos: Grafana http://localhost:3001 (admin/admin) · Prometheus :9090
+services:
+  # Override del servicio app: que mande trazas a Alloy.
+  app:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_SERVICE_NAME: frontend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      alloy:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ../observability/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.2.1
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yaml
+    volumes:
+      - ../observability/local/loki.yaml:/etc/loki/loki.yaml:ro
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ../observability/local/tempo.yaml:/etc/tempo/tempo.yaml:ro
+
+  alloy:
+    image: grafana/alloy:v1.4.2
+    restart: unless-stopped
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+    volumes:
+      - ../observability/local/config.alloy:/etc/alloy/config.alloy:ro
+      # Para descubrir y leer los logs de los contenedores.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+      - tempo
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../observability/local/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo

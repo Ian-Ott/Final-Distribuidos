@@ -16,6 +16,10 @@ k8s/gke/infra/tls/
 .env
 .env.*
 
+# Python
+__pycache__/
+*.pyc
+
 # Terraform
 infra/.terraform/
 infra/*.tfstate

@@ -1,0 +1,182 @@
+# ============================================================================
+# Exporters: traducen el estado de infra/cluster a métricas Prometheus.
+#
+# - redis-exporter / postgres-exporter: se conectan cross-namespace a los
+#   servicios de `sdypp` y exponen métricas (memoria, conexiones, ops/s, etc).
+# - kube-state-metrics: estado de los objetos de la K8s API (pods, deployments,
+#   restarts...). Es lo que alimenta alertas de CrashLoop y réplicas caídas.
+# - node-exporter: métricas del host (CPU, RAM, disco) en TODOS los nodos.
+#
+# Todos salvo node-exporter corren en el pool `monitoring` (nodeSelector +
+# toleration). node-exporter es DaemonSet y tolera cualquier taint para cubrir
+# también los nodos infra/apps.
+# Prometheus los descubre por las annotations prometheus.io/scrape.
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-exporter
+  template:
+    metadata:
+      labels:
+        app: redis-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      nodeSelector:
+        pool: monitoring
+      tolerations:
+        - key: monitoring
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.62.0
+          env:
+            - name: REDIS_ADDR
+              value: "redis://redis.sdypp.svc.cluster.local:6379"
+          ports:
+            - containerPort: 9121
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+    spec:
+      nodeSelector:
+        pool: monitoring
+      tolerations:
+        - key: monitoring
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: postgres-exporter
+          image: prometheuscommunity/postgres-exporter:v0.16.0
+          env:
+            # Credenciales por defecto del proyecto (ver configmap app-config).
+            # En un entorno endurecido esto saldría de un Secret.
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://entradas:entradas@postgres.sdypp.svc.cluster.local:5432/entradas?sslmode=disable"
+          ports:
+            - containerPort: 9187
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: kube-state-metrics
+      nodeSelector:
+        pool: monitoring
+      tolerations:
+        - key: monitoring
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: kube-state-metrics
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 192Mi
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      hostNetwork: true
+      hostPID: true
+      # Corre en todos los nodos (infra, apps, monitoring): tolera cualquier taint.
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter:v1.8.2
+          args:
+            - --path.rootfs=/host/root
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|run)($|/)
+          ports:
+            - containerPort: 9100
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: root
+              mountPath: /host/root
+              readOnly: true
+      volumes:
+        - name: root
+          hostPath:
+            path: /
