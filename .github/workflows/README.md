@@ -64,4 +64,4 @@ Push a Pilar2/P5/ → P3 + P4 (Deploy a GKE + Profesor)
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Auth con GCP via OIDC |
 | `GCP_SERVICE_ACCOUNT` | Service account para Terraform y kubectl |
 | `GCP_PROJECT_ID` | ID del proyecto GCP |
-| `KUBE_CONFIG_PROFESOR` | Kubeconfig (base64) del cluster del profesor |
+| `KUBE_CONFIG_PROFESOR` | Kubeconfig (base64) del cluster del profesor | 
