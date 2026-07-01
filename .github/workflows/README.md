@@ -1,4 +1,4 @@
-# CI/CD — GitHub Actions Pipelines
+# CI/CD — GitHub Actions Pipelines 
 
 Cuatro pipelines que despliegan cada capa del sistema independientemente.
 Todos gatean por **Gitleaks** (secret scanning) antes de ejecutar.
