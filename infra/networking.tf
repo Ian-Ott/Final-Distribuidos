@@ -20,11 +20,4 @@ resource "google_compute_subnetwork" "gke_subnet" {
   }
 }
 
-resource "google_compute_address" "rabbitmq" {
-  name   = "rabbitmq-ip"
-  region = var.region
-}
 
-resource "google_compute_global_address" "frontend" {
-  name = "frontend-ip"
-}

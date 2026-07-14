@@ -27,7 +27,7 @@ spec:
               containerPort: 9000
           env:
             - name: RABBITMQ_HOST
-              value: "rabbitmq.mytesera.tech"
+              value: "34.31.206.52"
             - name: GPU_SERVICE_URL
               value: "http://blockchain-gpu-server:8000/mine"
             # Tracing apagado: este pod vive en el cluster del profesor y no
