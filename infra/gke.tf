@@ -94,7 +94,7 @@ resource "google_container_node_pool" "monitoring" {
   node_count = 1
 
   node_config {
-    machine_type = "e2-standard-2" # 2 vCPU / 8 GiB — holgura para el LGTM
+    machine_type = "e2-medium" 
     disk_type    = "pd-standard"
     disk_size_gb = 50
 
