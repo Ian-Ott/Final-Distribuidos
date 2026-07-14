@@ -18,7 +18,7 @@ data:
 
   # MercadoPago — el access token vive en el Secret app-secrets.
   # En prod cambiar a https://tesera.tech.
-  MP_PUBLIC_URL: "https://tesera.tech"
+  MP_PUBLIC_URL: "https://mytesera.tech"
 
   # --- Observabilidad ---
   # Trazas OTLP del frontend (@vercel/otel usa OTLP HTTP → puerto 4318 de Alloy).

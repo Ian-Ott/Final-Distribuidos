@@ -19,3 +19,12 @@ resource "google_compute_subnetwork" "gke_subnet" {
     ip_cidr_range = "10.8.0.0/20"
   }
 }
+
+resource "google_compute_address" "rabbitmq" {
+  name   = "rabbitmq-ip"
+  region = var.region
+}
+
+resource "google_compute_global_address" "frontend" {
+  name = "frontend-ip"
+}
