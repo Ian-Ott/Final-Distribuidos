@@ -32,7 +32,7 @@ spec:
             - containerPort: 8000
           env:
             - name: RABBITMQ_HOST
-              value: "34.46.108.71"
+              value: "34.136.234.51"
             # Tracing apagado: no alcanza el Alloy de GKE desde el cluster del
             # profesor (ver nota en worker-deployment.yaml).
             - name: OTEL_SDK_DISABLED
