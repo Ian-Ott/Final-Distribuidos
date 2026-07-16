@@ -75,9 +75,9 @@ def heartbeat_loop():
                 routing_key='heartbeat_gpu',
                 body=json.dumps({"status": "alive", "timestamp": time.time()})
             )
-            logger.info("Heartbeat enviado")
+            log.info("Heartbeat enviado")
         except Exception as Exception e:
-            logger.exception(e)
+            log.exception(e)
 
             try:
                 hb_conn.close()

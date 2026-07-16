@@ -128,7 +128,7 @@ def heartbeat_consumer():
             # set(..., ex=N) reemplaza a setex deprecado. Si Redis está en
             # estado read-only durante un failover, esta llamada lanza
             # ReadOnlyError — la capturamos arriba en el while True.
-            logger.info("Heartbeat recibido")
+            log.info("Heartbeat recibido")
             r.set("heartbeat:gpu-server", "alive", ex=30)
         except Exception as e:
             log.warning(f"heartbeat write fallo (sigo consumiendo): {e}")
@@ -216,7 +216,7 @@ def monitor_loop():
             # Reflejar el estado en Prometheus en cada iteración.
             TRP_GPU_ALIVE.set(1 if gpu_alive else 0)
             TRP_FALLBACK_ACTIVE.set(1 if in_fallback else 0)
-            logger.info(f"gpu_alive={gpu_alive}, fallback={in_fallback}, ttl={r.ttl('heartbeat:gpu-server')}")
+            log.info(f"gpu_alive={gpu_alive}, fallback={in_fallback}, ttl={r.ttl('heartbeat:gpu-server')}")
             if not gpu_alive and not in_fallback:
                 activate_fallback()
             elif gpu_alive and in_fallback:
