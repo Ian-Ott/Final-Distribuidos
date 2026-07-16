@@ -306,16 +306,18 @@ def release_mining_lock(token: str):
 # El bloque génesis es el primero de toda blockchain — no tiene transacciones ni fue minado.
 # Su previous_hash es "0" porque no hay bloque anterior, y su block_hash es literalmente "GENESIS".
 # Solo se crea si la blockchain está vacía.
-if r.llen("blockchain") == 0:
-    genesis = {
-        "index": 0,
-        "timestamp": time.time(),
-        "transactions": [],
-        "previous_hash": "0",
-        "nonce": 0,
-        "block_hash": "GENESIS"
-    }
-    r.rpush("blockchain", json.dumps(genesis))
+#Se usa un lock distribuido para que si hay mas de una replica del nct no cargue mas de un genesis.
+if r.set("genesis_lock", "1", nx=True):
+    if r.llen("blockchain") == 0:
+        genesis = {
+            "index": 0,
+            "timestamp": time.time(),
+            "transactions": [],
+            "previous_hash": "0",
+            "nonce": 0,
+            "block_hash": "GENESIS"
+        }
+        r.rpush("blockchain", json.dumps(genesis))
 
 # -------------------------
 # MODELOS

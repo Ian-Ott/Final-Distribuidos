@@ -66,15 +66,24 @@ def heartbeat_loop():
     hb_ch.queue_declare(queue='heartbeat_gpu')
     while True:
         try:
+            if hb_conn.is_closed:
+            hb_conn = connect_rabbitmq()
+            hb_ch = hb_conn.channel()
+            hb_ch.queue_declare(queue="heartbeat_gpu")
             hb_ch.basic_publish(
                 exchange='',
                 routing_key='heartbeat_gpu',
                 body=json.dumps({"status": "alive", "timestamp": time.time()})
             )
-        except Exception:
-            hb_conn = connect_rabbitmq()
-            hb_ch = hb_conn.channel()
-            hb_ch.queue_declare(queue='heartbeat_gpu')
+            logger.info("Heartbeat enviado")
+        except Exception as Exception e:
+            logger.exception(e)
+
+            try:
+                hb_conn.close()
+            except:
+                pass
+            hb_conn = None
         time.sleep(10)
 
 threading.Thread(target=heartbeat_loop, daemon=True).start()
