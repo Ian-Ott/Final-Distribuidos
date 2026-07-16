@@ -76,7 +76,7 @@ def heartbeat_loop():
                     body=json.dumps({"status": "alive", "timestamp": time.time()})
                 )
                 log.info("Heartbeat enviado")
-        except Exception as Exception e:
+        except Exception as e:
             log.exception(e)
 
             try:
