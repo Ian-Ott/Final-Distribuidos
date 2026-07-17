@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.exceptions import InvalidSignature
 
 import observability as obs
+from observability import SERVICE_UP
 from prometheus_client import Counter, Gauge, Histogram
 
 # API REST que expone endpoints para el mundo exterior y coordina todo el proceso de creación de bloques.
@@ -44,16 +45,20 @@ NCT_PENDING_TX = Gauge("nct_pending_transactions", "Transacciones pendientes de 
 NCT_BLOCKCHAIN_LEN = Gauge("nct_blockchain_length", "Cantidad de bloques en la cadena")
 NCT_DIFFICULTY_ZEROS = Gauge("nct_difficulty_zeros", "Ceros de dificultad exigidos actualmente")
 NCT_MINING_ACTIVE = Gauge("nct_mining_active", "1 si una replica tiene el lock de minado tomado")
-
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
 
 def connect_redis():
     while True:
         try:
             client = redis.Redis(host="redis", port=6379, decode_responses=True)
             client.ping()
+            REDIS_CONNECTED.set(1)
+            log.info("Redis conectado!!!")
             return client
         except Exception:
             log.warning("Esperando Redis...")
+            REDIS_CONNECTED.set(0)
             time.sleep(3)
 
 r = connect_redis()
@@ -85,9 +90,12 @@ def connect_rabbitmq():
                     blocked_connection_timeout=300
                 )
             )
+            RABBIT_CONNECTED.set(1)
+            log.info("Rabbit conectado!!!")
             return connection
         except Exception:
             log.warning("Esperando RabbitMQ...")
+            RABBIT_CONNECTED.set(0)
             time.sleep(3)
 
 connection = connect_rabbitmq()
@@ -95,6 +103,7 @@ channel = connection.channel()
 channel.queue_declare(queue='tareas_pool')  # NCT → TrP
 channel.queue_declare(queue='soluciones')   # Workers → NCT
 rabbit_lock = threading.RLock()
+SERVICE_UP.labels(service="nct").set(1)
 
 def ensure_connection():
     """Verifica que la conexión y el canal sigan vivos; si no, reconecta."""
@@ -166,6 +175,14 @@ def purge_stale_solutions(task_id: str):
                 "task_id": task_id,
                 "count": purged,
             }))
+            log.info(
+            "Se purgaron soluciones sobrantes",
+            extra={
+                "ctx_event": "soluciones_sobrantes_purgadas",
+                "ctx_task_id": task_id,
+                "ctx_count": purged,
+            }
+            )
     except Exception as e:
         r.rpush("logs", json.dumps({
             "timestamp": time.time(),
@@ -173,6 +190,14 @@ def purge_stale_solutions(task_id: str):
             "task_id": task_id,
             "error": str(e),
         }))
+        log.error(
+            "Falló la purga de soluciones",
+            extra={
+                "ctx_event": "purga_soluciones_fallo",
+                "ctx_task_id": task_id,
+                "ctx_error": str(e),
+            }
+        )
 
 # NOTA: el rabbit_keepalive_loop fue removido. La razón:
 # - pika.BlockingConnection NO es thread-safe, ni siquiera con RLock alrededor.

@@ -30,6 +30,13 @@ import socket
 import sys
 import time
 from typing import Optional
+from prometheus_client import Gauge
+
+SERVICE_UP = Gauge(
+    "service_up",
+    "Estado del servicio",
+    ["service"]
+)
 
 # ---------------------------------------------------------------------------
 # Métricas (Prometheus)

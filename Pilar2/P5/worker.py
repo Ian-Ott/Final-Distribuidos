@@ -10,6 +10,7 @@ import logging
 import hashlib
 
 import observability as obs
+from observability import SERVICE_UP
 from prometheus_client import Counter, Histogram
 
 # Este worker no mina localmente: delega el cálculo pesado al servidor GPU
@@ -32,7 +33,8 @@ WORKER_TASK_SECONDS = Histogram(
     "worker_task_duration_seconds", "Duracion del minado de una sub-tarea (incluye HTTP a gpu-server)",
     ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
 )
-
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
 # Identificador único de este worker — antes no existía, por eso no había
 # forma de saber CUÁL réplica encontró la solución (acá solo hay una réplica
 # de gpu-server según el deployment, pero igual queda preparado si en algún
@@ -51,9 +53,11 @@ def connect_redis():
             client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, decode_responses=True)
             client.ping()
             log.info("Conectado a Redis")
+            REDIS_CONNECTED.set(1)
             return client
         except Exception:
             log.warning(f"Redis no disponible (intento {intento+1}/20), reintentando en 3s...")
+            REDIS_CONNECTED.set(0)
             time.sleep(3)
     log.error("Redis sigue sin responder tras 20 intentos — logs solo por consola")
     return None
@@ -90,15 +94,17 @@ while True:
             )
         )
         channel = connection.channel()
+        RABBIT_CONNECTED.set(1)
         break
     except pika.exceptions.AMQPConnectionError:
         log.warning("RabbitMQ no está listo todavía. Reintentando en 3 segundos...")
+        RABBIT_CONNECTED.set(0)
         time.sleep(3)
 
 # Declaramos las mismas colas
 channel.queue_declare(queue='tareas')
 channel.queue_declare(queue='soluciones')
-
+SERVICE_UP.labels(service="worker-gpu").set(1)
 
 def callback(ch, method, properties, body):
     try:

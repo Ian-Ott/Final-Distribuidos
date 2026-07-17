@@ -9,6 +9,7 @@ import hashlib
 import logging
 
 import observability as obs
+from observability import SERVICE_UP
 from prometheus_client import Counter, Histogram
 
 # Este archivo es un minero de GPU... digo, de CPU.
@@ -31,7 +32,8 @@ WORKER_TASK_SECONDS = Histogram(
     "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
     ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
 )
-
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
 
@@ -55,9 +57,11 @@ def connect_rabbitmq():
                 )
             )
             log.info("Conectado a RabbitMQ (TLS)")
+            RABBIT_CONNECTED.set(1)
             return connection
         except Exception:
             log.warning("Esperando RabbitMQ...")
+            RABBIT_CONNECTED.set(0)
             time.sleep(3)
 
 # Retry loop para conectarse a redis
@@ -67,9 +71,11 @@ def connect_redis():
             r = redis.Redis(host="redis", port=6379, decode_responses=True)
             r.ping()
             log.info("Conectado a Redis")
+            REDIS_CONNECTED.set(1)
             return r
         except Exception:
             log.warning("Esperando Redis...")
+            REDIS_CONNECTED.set(0)
             time.sleep(3)
 
 r = connect_redis()
@@ -79,7 +85,7 @@ connection = connect_rabbitmq()
 channel = connection.channel()
 channel.queue_declare(queue='tareas') 
 channel.queue_declare(queue='soluciones')
-
+SERVICE_UP.labels(service="worker-cpu").set(1)
 
 def log_event(event: str, **fields):
     """Mismo patrón de log centralizado que usan NCT y TrP: escribe en la

@@ -9,6 +9,7 @@ import ssl
 import urllib.request
 
 import observability as obs
+from observability import SERVICE_UP
 from prometheus_client import Counter, Gauge
 
 # TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers.
@@ -28,6 +29,8 @@ TRP_CHUNKS = Counter("trp_chunks_published_total", "Sub-tareas (chunks) publicad
 TRP_FALLBACK_ACTIVE = Gauge("trp_fallback_active", "1 si el fallback a CPU esta activo")
 TRP_GPU_ALIVE = Gauge("trp_gpu_alive", "1 si el gpu-server tiene heartbeat vivo")
 TRP_SCALE_EVENTS = Counter("trp_cpu_scale_events_total", "Eventos de escalado de worker-cpu", ["action"])
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
 
 # -------------------------
 # CONEXIONES
@@ -39,9 +42,11 @@ def connect_redis():
             r = redis.Redis(host="redis", port=6379, decode_responses=True)
             r.ping()
             log.info("Conectado a Redis")
+            REDIS_CONNECTED.set(1)
             return r
         except Exception:
             log.warning("Esperando Redis...")
+            REDIS_CONNECTED.set(0)
             time.sleep(3)
 
 def rabbitmq_ssl_context():
@@ -63,9 +68,11 @@ def connect_rabbitmq():
                 )
             )
             log.info("Conectado a RabbitMQ (TLS)")
+            RABBIT_CONNECTED.set(1)
             return conn
         except Exception:
             log.warning("Esperando RabbitMQ...")
+            RABBIT_CONNECTED.set(0)
             time.sleep(3)
 
 r = connect_redis()
@@ -75,7 +82,7 @@ channel.queue_declare(queue='tareas_pool')   # NCT → TrP
 channel.queue_declare(queue='tareas')        # TrP → Workers
 channel.queue_declare(queue='soluciones')
 channel.queue_declare(queue='heartbeat_gpu') # gpu-server → TrP
-
+SERVICE_UP.labels(service="trp").set(1)
 # -------------------------
 # MONITOREO DE GPU
 # -------------------------
