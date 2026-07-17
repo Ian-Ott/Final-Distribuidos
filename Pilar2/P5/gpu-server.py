@@ -27,7 +27,7 @@ _metrics_app = obs.metrics_asgi_app()
 if _metrics_app is not None:
     app.mount("/metrics", _metrics_app)
 obs.instrument_fastapi(app)
-
+threading.Thread(target=heartbeat_loop, daemon=True).start()
 # -------------------------
 # CONEXIÓN A RABBITMQ (para el heartbeat)
 # -------------------------
@@ -64,21 +64,20 @@ def heartbeat_loop():
     hb_conn = connect_rabbitmq()
     hb_ch = hb_conn.channel()
     hb_ch.queue_declare(queue='heartbeat_gpu')
+    log.info("Heartbeat iniciado")
     while True:
         try:
             if hb_conn.is_closed:
                 hb_conn = connect_rabbitmq()
                 hb_ch = hb_conn.channel()
                 hb_ch.queue_declare(queue="heartbeat_gpu")
-                hb_ch.basic_publish(
-                    exchange='',
-                    routing_key='heartbeat_gpu',
-                    body=json.dumps({"status": "alive", "timestamp": time.time()})
-                )
-                log.info("Heartbeat enviado")
+            hb_ch.basic_publish(
+                exchange='',
+                routing_key='heartbeat_gpu',
+                body=json.dumps({"status": "alive", "timestamp": time.time()})
+            )
         except Exception as e:
             log.exception(e)
-
             try:
                 hb_conn.close()
             except:
@@ -86,7 +85,7 @@ def heartbeat_loop():
             hb_conn = None
         time.sleep(10)
 
-threading.Thread(target=heartbeat_loop, daemon=True).start()
+
 
 
 class MineRequest(BaseModel):
@@ -107,7 +106,7 @@ def get_gpu_name():
 
 def select_binary(gpu):
     gpu = gpu.lower()
-
+    log.info("Identificando GPU")
     if "4060" in gpu or "rtx 40" in gpu:
         return "./minero_sm89"
     if "3060" in gpu or "3050" in gpu or "rtx 30" in gpu:
@@ -123,7 +122,7 @@ def mine(req: MineRequest):
     GPU_MINE_REQUESTS.inc()
     gpu = get_gpu_name()
     binary = select_binary(gpu)
-
+    log.info("Minando...")
     with GPU_MINE_SECONDS.time():
         result = subprocess.run(
             [
@@ -138,6 +137,7 @@ def mine(req: MineRequest):
         )
 
     if "Nonce encontrado:" in (result.stdout or ""):
+        log.info("Nonce encontrado!!!")
         GPU_SOLUTIONS.inc()
 
     return {"stdout": result.stdout}
