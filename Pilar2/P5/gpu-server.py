@@ -27,7 +27,7 @@ _metrics_app = obs.metrics_asgi_app()
 if _metrics_app is not None:
     app.mount("/metrics", _metrics_app)
 obs.instrument_fastapi(app)
-threading.Thread(target=heartbeat_loop, daemon=True).start()
+
 # -------------------------
 # CONEXIÓN A RABBITMQ (para el heartbeat)
 # -------------------------
@@ -85,7 +85,7 @@ def heartbeat_loop():
             hb_conn = None
         time.sleep(10)
 
-
+threading.Thread(target=heartbeat_loop, daemon=True).start()
 
 
 class MineRequest(BaseModel):
