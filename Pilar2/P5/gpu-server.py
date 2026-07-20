@@ -71,7 +71,7 @@ def heartbeat_loop():
     log.info("Heartbeat iniciado")
     while True:
         try:
-            if hb_conn.is_closed:
+            if hb_conn is None or hb_conn.is_closed:
                 hb_conn = connect_rabbitmq()
                 hb_ch = hb_conn.channel()
                 hb_ch.queue_declare(queue="heartbeat_gpu")
