@@ -83,6 +83,12 @@ channel.queue_declare(queue='tareas')        # TrP → Workers
 channel.queue_declare(queue='soluciones')
 channel.queue_declare(queue='heartbeat_gpu') # gpu-server → TrP
 SERVICE_UP.labels(service="trp").set(1)
+log.info(
+    "TrP iniciado",
+    extra={
+        "ctx_event": "trp_started",
+    },
+)
 # -------------------------
 # MONITOREO DE GPU
 # -------------------------
@@ -116,7 +122,13 @@ def scale_cpu_workers(replicas: int):
             },
         )
         urllib.request.urlopen(req, context=ctx, timeout=10)
-        log.info(f"worker-cpu escalado a {replicas} réplicas")
+        log.info(
+            "Deployment escalado",
+            extra={
+                "ctx_event": "deployment_scaled",
+                "ctx_replicas": replicas,
+            },
+        )
     except Exception as e:
         log.error(f"Error escalando worker-cpu: {e}")
 
@@ -135,7 +147,12 @@ def heartbeat_consumer():
             # set(..., ex=N) reemplaza a setex deprecado. Si Redis está en
             # estado read-only durante un failover, esta llamada lanza
             # ReadOnlyError — la capturamos arriba en el while True.
-            log.info("Heartbeat recibido")
+            log.info(
+                "Heartbeat GPU recibido",
+                extra={
+                    "ctx_event": "gpu_heartbeat",
+                },
+            )
             r.set("heartbeat:gpu-server", "alive", ex=30)
         except Exception as e:
             log.warning(f"heartbeat write fallo (sigo consumiendo): {e}")
@@ -176,7 +193,14 @@ def activate_fallback():
     # SET NX: solo el primer TrP en detectar la caída entra al if.
     if not r.set(FALLBACK_MODE_KEY, "1", nx=True):
         return False
-    log.warning("gpu-server no responde — activando fallback CPU")
+    log.warning(
+        "Activando fallback CPU",
+        extra={
+            "ctx_event": "fallback_enabled",
+            "ctx_previous_difficulty": original,
+            "ctx_new_difficulty": FALLBACK_DIFFICULTY,
+        },
+    )
     original = r.get("difficulty")
     # NX en el save del original: si otro TrP ya lo guardó (no debería pasar
     # con el flag NX de arriba, pero es defensa en profundidad), no lo pisamos.
@@ -191,13 +215,26 @@ def activate_fallback():
     }))
     TRP_SCALE_EVENTS.labels(action="scale_up").inc()
     scale_cpu_workers(CPU_WORKER_REPLICAS)
+    log.info(
+        "Escalado CPU completado",
+        extra={
+            "ctx_event": "cpu_scaled_up",
+            "ctx_replicas": CPU_WORKER_REPLICAS,
+        },
+    )
     return True
 
 def restore_from_fallback():
     # Solo el primer TrP en detectar el regreso entra (DEL devuelve 1 si borró).
     if r.delete(FALLBACK_MODE_KEY) == 0:
         return False
-    log.info("gpu-server activo de nuevo — restaurando modo GPU")
+    log.info(
+        "Restaurando modo GPU",
+        extra={
+            "ctx_event": "fallback_disabled",
+            "ctx_difficulty": original,
+        },
+    )
     original = r.get(ORIGINAL_DIFFICULTY_KEY)
     # Si no se guardó el original, o quedó en "0" (puede pasar si el fallback se
     # activó cuando la dificultad ya era "0" por flapping previo), volvemos al
@@ -213,6 +250,12 @@ def restore_from_fallback():
     }))
     TRP_SCALE_EVENTS.labels(action="scale_down").inc()
     scale_cpu_workers(0)
+    log.info(
+        "Workers CPU detenidos",
+        extra={
+            "ctx_event": "cpu_scaled_down",
+        },
+    )
     return True
 
 def monitor_loop():
@@ -223,10 +266,21 @@ def monitor_loop():
             # Reflejar el estado en Prometheus en cada iteración.
             TRP_GPU_ALIVE.set(1 if gpu_alive else 0)
             TRP_FALLBACK_ACTIVE.set(1 if in_fallback else 0)
-            log.info(f"gpu_alive={gpu_alive}, fallback={in_fallback}, ttl={r.ttl('heartbeat:gpu-server')}")
             if not gpu_alive and not in_fallback:
+                log.warning(
+                    "GPU no disponible",
+                    extra={
+                        "ctx_event": "gpu_offline",
+                    },
+                )
                 activate_fallback()
             elif gpu_alive and in_fallback:
+                log.info(
+                    "GPU nuevamente disponible",
+                    extra={
+                        "ctx_event": "gpu_online",
+                    },
+                )
                 restore_from_fallback()
         except Exception as e:
             log.error(f"monitor_loop iter fallo (sigo intentando): {e}")
@@ -263,7 +317,15 @@ def subdivide_and_publish(tarea: dict):
     with span_cm as span:
         span.set_attribute("task_id", str(task_id))
         span.set_attribute("chunks", n_chunks)
-        log.info(f"Subdividiendo tarea en {n_chunks} chunks (dificultad: {difficulty})")
+        log.info(
+            "Subdividiendo tarea",
+            extra={
+                "ctx_event": "task_subdivided",
+                "ctx_task_id": task_id,
+                "ctx_chunks": n_chunks,
+                "ctx_difficulty": difficulty,
+            },
+        )
 
         # El contexto a propagar a los workers se toma del span actual.
         trace_ctx = obs.inject_trace_context()
@@ -279,13 +341,30 @@ def subdivide_and_publish(tarea: dict):
                 "end":        chunk_end,
                 "_trace":     trace_ctx,
             }
-
+            log.info(
+                "Publicando chunk",
+                extra={
+                    "ctx_event": "chunk_published",
+                    "ctx_task_id": task_id,
+                    "ctx_chunk": i,
+                    "ctx_start": chunk_start,
+                    "ctx_end": chunk_end,
+                },
+            )
             channel.basic_publish(
                 exchange='',
                 routing_key='tareas',
                 body=json.dumps(subtarea)
             )
             TRP_CHUNKS.inc()
+        log.info(
+            "Todos los chunks publicados",
+            extra={
+                "ctx_event": "all_chunks_published",
+                "ctx_task_id": task_id,
+                "ctx_chunks": n_chunks,
+            },
+        )
 
     TRP_TASKS.inc()
     r.rpush("logs", json.dumps({
@@ -301,6 +380,13 @@ def subdivide_and_publish(tarea: dict):
 # -------------------------
 
 def on_task(ch, method, properties, body):
+    log.info(
+        "Tarea recibida del NCT",
+        extra={
+            "ctx_event": "task_received",
+            "ctx_task_id": tarea.get("task_id"),
+        },
+    )
     tarea = json.loads(body)
     subdivide_and_publish(tarea)
 

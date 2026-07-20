@@ -276,6 +276,15 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
                     "nonce": solucion.get("nonce"),
                     "hash": solucion.get("hash"),
                 }))
+                log.info(
+                    "Solución recibida",
+                    extra={
+                        "ctx_event": "solution_received",
+                        "ctx_task_id": task_id,
+                        "ctx_nonce": solucion.get("nonce"),
+                        "ctx_hash": solucion.get("hash"),
+                    }
+                )
                 return solucion
 
         time.sleep(MINING_POLL_INTERVAL_SECONDS)
@@ -287,6 +296,14 @@ def wait_for_solution(task_id: str, timeout_seconds: int, data: str = None, diff
         "task_id": task_id,
         "timeout_seconds": timeout_seconds,
     }))
+    log.warning(
+        "Timeout esperando solución",
+        extra={
+            "ctx_event": "mining_timeout",
+            "ctx_task_id": task_id,
+            "ctx_timeout": timeout_seconds,
+        }
+    )
     return None
 
 # -------------------------
@@ -427,7 +444,15 @@ def transaction(tx: Transaction):
     transaccion = tx.dict()
     NCT_TX_RECEIVED.labels(tx_type="legacy").inc()
     r.rpush("pending_transactions", json.dumps(transaccion))
-
+    
+    log.info(
+        "Transacción recibida",
+        extra={
+            "ctx_event": "transaction_received",
+            "ctx_type": "legacy",
+            "ctx_pending": r.llen("pending_transactions"),
+        }
+    )
     r.rpush("logs", json.dumps({
         "timestamp": time.time(),
         "event": "transaccion_recibida",
@@ -599,6 +624,14 @@ def apply_confirmed_tx(tx: dict, block_index: int, confirmed_at: float):
         "block_index": block_index,
         "confirmed_at": str(confirmed_at),
     })
+    log.info(
+        "Operación confirmada",
+        extra={
+            "ctx_event": "operation_confirmed",
+            "ctx_op_id": op_id,
+            "ctx_block": block_index,
+        }
+    )
 
 def mark_operation_failed(op_id: str, error_code: str):
     save_operation(op_id, {
@@ -606,6 +639,14 @@ def mark_operation_failed(op_id: str, error_code: str):
         "error_code": error_code,
         "failed_at": str(time.time()),
     })
+    log.warning(
+        "Operación fallida",
+        extra={
+            "ctx_event": "operation_failed",
+            "ctx_op_id": op_id,
+            "ctx_error": error_code,
+        }
+    )
 
 # ---------------------------------------------------------------------------
 # Endpoints ticket-aware
@@ -634,6 +675,15 @@ def tx_mint(tx: MintTx):
         "event_id": tx.event_id,
         "submitted_at": str(time.time()),
     })
+    log.info(
+        "Mint recibido",
+        extra={
+            "ctx_event": "mint_received",
+            "ctx_op_id": op_id,
+            "ctx_event_id": tx.event_id,
+            "ctx_ticket_count": tx.ticket_count,
+        }
+    )
     return {"op_id": op_id, "status": "PENDING"}
 
 @app.post("/tx/transfer", status_code=202)
@@ -672,6 +722,15 @@ def tx_transfer(tx: TransferTx):
         "ticket_id": tx.ticket_id,
         "submitted_at": str(time.time()),
     })
+    log.info(
+        "Transfer recibida",
+        extra={
+            "ctx_event": "transfer_received",
+            "ctx_op_id": op_id,
+            "ctx_ticket_id": tx.ticket_id,
+            "ctx_reason": tx.reason,
+        }
+    )
     return {"op_id": op_id, "status": "PENDING"}
 
 @app.get("/ops/{op_id}")
@@ -730,6 +789,13 @@ def _mine_one_block():
     """Versión interna de /create-block que también aplica los efectos
     ticket-aware al confirmar. Reutiliza la lógica de la API."""
     lock_token = acquire_mining_lock()
+    log.info(
+        "Lock de minado adquirido",
+        extra={
+            "ctx_event": "mining_lock_acquired",
+            "ctx_lock": lock_token,
+        }
+    )
     if lock_token is None:
         return None
     NCT_MINING_ACTIVE.set(1)
@@ -753,6 +819,15 @@ def _mine_one_block():
             "transactions": pending_txs,
             "previous_hash": ultimo["block_hash"],
         }
+        log.info(
+            "Bloque preparado",
+            extra={
+                "ctx_event": "block_prepared",
+                "ctx_block_index": block["index"],
+                "ctx_tx_count": pending_count,
+                "ctx_previous_hash": block["previous_hash"],
+            }
+        )
         data = json.dumps(block, sort_keys=True)
         task_id = str(uuid.uuid4())
         mining_span.set_attribute("task_id", task_id)
@@ -778,9 +853,34 @@ def _mine_one_block():
             "_trace": obs.inject_trace_context(),
         }
         mine_start = time.time()
-        safe_basic_publish('tareas_pool', json.dumps(tarea_completa))
 
+        log.info(
+            "Publicando tarea de minería",
+            extra={
+                "ctx_event": "mining_task_sent",
+                "ctx_task_id": task_id,
+                "ctx_difficulty": difficulty,
+                "ctx_start": 0,
+                "ctx_end": TOTAL,
+            }
+        )
+        safe_basic_publish('tareas_pool', json.dumps(tarea_completa))
+        log.info(
+            "Tarea enviada",
+            extra={
+                "ctx_event": "task_published",
+                "ctx_task_id": task_id,
+            }
+        )
         # Esperar solución.
+        log.info(
+            "Esperando solución",
+            extra={
+                "ctx_event": "waiting_solution",
+                "ctx_task_id": task_id,
+                "ctx_timeout": MINING_TIMEOUT_SECONDS,
+            }
+        )
         solucion = wait_for_solution(task_id, MINING_TIMEOUT_SECONDS, data=data, difficulty=difficulty)
         if solucion is None:
             return None
@@ -792,6 +892,14 @@ def _mine_one_block():
         # siendo válida para el contrato original. Releer aquí causaba
         # invalid_pow_solution espurios cuando el gpu-server flapeaba.
         if not verify_hash(data, nonce, hash_recibido, difficulty):
+            log.info(
+                "Prueba de trabajo verificada",
+                extra={
+                    "ctx_event": "pow_verified",
+                    "ctx_task_id": task_id,
+                    "ctx_nonce": nonce,
+                }
+            )
             calculated_debug = hashlib.md5((data + str(nonce)).encode()).hexdigest()
             r.rpush("logs", json.dumps({
                 "timestamp": time.time(),
@@ -824,6 +932,15 @@ def _mine_one_block():
             return None
 
         save_block(block)
+        log.info(
+            "Bloque almacenado",
+            extra={
+                "ctx_event": "block_saved",
+                "ctx_task_id": task_id,
+                "ctx_block": block["index"],
+                "ctx_hash": block["block_hash"],
+            }
+        )
         r.ltrim("pending_transactions", pending_count, -1)
 
         confirmed_at = time.time()
@@ -842,6 +959,15 @@ def _mine_one_block():
         # Aplicar efectos ticket-aware sin ocultar que el bloque ya fue creado.
         for tx in pending_txs:
             try:
+                log.info(
+                    "Aplicando transacción confirmada",
+                    extra={
+                        "ctx_event": "apply_transaction",
+                        "ctx_task_id": task_id,
+                        "ctx_type": tx.get("tx_type"),
+                        "ctx_op_id": tx.get("op_id"),
+                    }
+                )
                 apply_confirmed_tx(tx, block["index"], confirmed_at)
             except Exception as e:
                 op_id = tx.get("op_id")
@@ -861,6 +987,13 @@ def _mine_one_block():
     finally:
         NCT_MINING_ACTIVE.set(0)
         mining_span_cm.__exit__(None, None, None)
+        log.info(
+            "Lock de minado liberado",
+            extra={
+                "ctx_event": "mining_lock_released",
+                "ctx_lock": lock_token,
+            }
+        )
         release_mining_lock(lock_token)
 
 # ---------------------------------------------------------------------------

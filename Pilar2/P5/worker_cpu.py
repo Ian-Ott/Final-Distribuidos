@@ -86,6 +86,14 @@ channel = connection.channel()
 channel.queue_declare(queue='tareas') 
 channel.queue_declare(queue='soluciones')
 SERVICE_UP.labels(service="worker-cpu").set(1)
+log.info(
+    "Worker iniciado",
+    extra={
+        "ctx_event": "worker_started",
+        "ctx_worker_id": WORKER_ID,
+        "ctx_worker_type": WORKER_TYPE,
+    },
+)
 
 def log_event(event: str, **fields):
     """Mismo patrón de log centralizado que usan NCT y TrP: escribe en la
@@ -100,7 +108,17 @@ def log_event(event: str, **fields):
 # El TrP monitorea estas claves para saber cuántos workers están vivos y de qué tipo son.
 def heartbeat_loop():
     while True:
-        r.setex(f"heartbeat:{WORKER_ID}", 30, "cpu")
+        try:
+            r.setex(f"heartbeat:{WORKER_ID}", 30, "cpu")
+        except Exception as e:
+            log.warning(
+                "Error enviando heartbeat",
+                extra={
+                    "ctx_event": "heartbeat_failed",
+                    "ctx_worker_id": WORKER_ID,
+                    "ctx_error": str(e),
+                },
+            )
         time.sleep(10)
 
 threading.Thread(target=heartbeat_loop, daemon=True).start()
@@ -133,7 +151,16 @@ def callback(ch, method, properties, body):
     try:
         tarea = json.loads(body)
 
-        log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
+        log.info(
+            "Subtarea recibida",
+            extra={
+                "ctx_event": "task_received",
+                "ctx_worker_id": WORKER_ID,
+                "ctx_task_id": tarea.get("task_id"),
+                "ctx_start": tarea["start"],
+                "ctx_end": tarea["end"],
+            },
+        )
 
         # Continuamos la traza propagada por el TrP (contexto en el payload).
         parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
@@ -145,6 +172,16 @@ def callback(ch, method, properties, body):
             span.set_attribute("range_end", tarea["end"])
             WORKER_TASKS.labels(worker_type=WORKER_TYPE).inc()
             with WORKER_TASK_SECONDS.labels(worker_type=WORKER_TYPE).time():
+                log.info(
+                    "Comenzando minado",
+                    extra={
+                        "ctx_event": "mining_started",
+                        "ctx_task_id": tarea.get("task_id"),
+                        "ctx_start": tarea["start"],
+                        "ctx_end": tarea["end"],
+                        "ctx_difficulty": tarea["difficulty"],
+                    },
+                )
                 nonce, hash_resultado = mine_cpu(
                     tarea["data"],
                     tarea["difficulty"],
@@ -162,6 +199,14 @@ def callback(ch, method, properties, body):
                     "hash": hash_resultado,
                 })
             )
+            log.info(
+                "Solución publicada",
+                extra={
+                    "ctx_event": "solution_sent",
+                    "ctx_task_id": tarea.get("task_id"),
+                    "ctx_nonce": nonce,
+                },
+            )
             WORKER_SOLUTIONS.labels(worker_type=WORKER_TYPE).inc()
             log.info(f"[{WORKER_ID}] Nonce encontrado: {nonce}")
             log_event(
@@ -171,17 +216,55 @@ def callback(ch, method, properties, body):
                 start=tarea["start"], end=tarea["end"],
             )
         else:
-            log.info(f"[{WORKER_ID}] Sin solución en rango {tarea['start']}-{tarea['end']}")
+            log.info(
+                "Rango agotado sin solución",
+                extra={
+                    "ctx_event": "range_finished",
+                    "worker_id": WORKER_ID,
+                    "ctx_task_id": tarea.get("task_id"),
+                    "ctx_start": tarea["start"],
+                    "ctx_end": tarea["end"],
+                },
+            )
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
+        log.info(
+            "Subtarea finalizada",
+            extra={
+                "ctx_event": "task_completed",
+                "ctx_task_id": tarea.get("task_id"),
+            },
+        )
     except Exception as e:
         # Reintentar una vez y luego soltar (mismo patrón anti-poison que el
         # worker GPU): evita el requeue infinito si el mensaje es inválido.
         already_retried = bool(method.redelivered)
-        log.error(f"[{WORKER_ID}] Error procesando tarea (redelivered={already_retried}): {e}", exc_info=True)
+        log.exception(
+            "Error procesando subtarea",
+            extra={
+                "ctx_event": "task_failed",
+                "worker_id": WORKER_ID,
+                "ctx_task_id": tarea.get("task_id"),
+                "ctx_redelivered": already_retried,
+            },
+        )
         if already_retried:
+            log.warning(
+                "Subtarea descartada",
+                extra={
+                    "ctx_event": "task_discarded",
+                    "ctx_task_id": tarea.get("task_id"),
+                },
+            )
             ch.basic_ack(delivery_tag=method.delivery_tag)
         else:
+            log.warning(
+                "Reencolando subtarea",
+                extra={
+                    "ctx_event": "task_requeued",
+                    "ctx_task_id": tarea.get("task_id"),
+                },
+            )
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=False)

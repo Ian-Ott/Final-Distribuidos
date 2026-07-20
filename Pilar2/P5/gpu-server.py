@@ -10,7 +10,7 @@ import os
 
 import observability as obs
 from observability import SERVICE_UP
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Histogram, Gauge
 
 # --- Observabilidad ---------------------------------------------------------
 log = obs.setup_logging("gpu-server")

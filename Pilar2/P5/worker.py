@@ -11,7 +11,7 @@ import hashlib
 
 import observability as obs
 from observability import SERVICE_UP
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Histogram, Gauge
 
 # Este worker no mina localmente: delega el cálculo pesado al servidor GPU
 # vía HTTP y solo reporta el resultado.
@@ -59,7 +59,12 @@ def connect_redis():
             log.warning(f"Redis no disponible (intento {intento+1}/20), reintentando en 3s...")
             REDIS_CONNECTED.set(0)
             time.sleep(3)
-    log.error("Redis sigue sin responder tras 20 intentos — logs solo por consola")
+    log.error(
+        "Redis no disponible",
+        extra={
+            "ctx_event": "redis_unavailable",
+        },
+    )
     return None
 
 
@@ -105,11 +110,28 @@ while True:
 channel.queue_declare(queue='tareas')
 channel.queue_declare(queue='soluciones')
 SERVICE_UP.labels(service="worker-gpu").set(1)
+log.info(
+    "Worker GPU iniciado",
+    extra={
+        "ctx_event": "worker_started",
+        "ctx_worker_id": WORKER_ID,
+        "ctx_gpu_server": GPU_SERVER_URL,
+    },
+)
 
 def callback(ch, method, properties, body):
     try:
         tarea = json.loads(body)
-        log.info(f"[{WORKER_ID}] Procesando rango [{tarea['start']} - {tarea['end']}]...")
+        log.info(
+            "Subtarea recibida",
+            extra={
+                "ctx_event": "task_received",
+                "ctx_worker_id": WORKER_ID,
+                "ctx_task_id": tarea.get("task_id"),
+                "ctx_start": tarea["start"],
+                "ctx_end": tarea["end"],
+            },
+        )
 
         # Continuamos la traza propagada por el TrP (contexto en el payload).
         parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
@@ -129,8 +151,25 @@ def callback(ch, method, properties, body):
                 "end": tarea["end"]
             }
             with WORKER_TASK_SECONDS.labels(worker_type=WORKER_TYPE).time():
+                log.info(
+                    "Enviando trabajo al GPU Server",
+                    extra={
+                        "ctx_event": "gpu_request_sent",
+                        "ctx_task_id": tarea.get("task_id"),
+                        "ctx_start": tarea["start"],
+                        "ctx_end": tarea["end"],
+                    },
+                )
                 response = requests.post(GPU_SERVER_URL, json=payload, timeout=60)
                 response.raise_for_status()
+                log.info(
+                    "Respuesta recibida del GPU Server",
+                    extra={
+                        "ctx_event": "gpu_response_received",
+                        "ctx_task_id": tarea.get("task_id"),
+                        "ctx_status": response.status_code,
+                    },
+                )
             stdout_data = response.json().get("stdout", "")
 
         nonce = None
@@ -171,10 +210,26 @@ def callback(ch, method, properties, body):
                 local_matches_binary=verify_calc == hash_resultado,
             )
         else:
-            log.info(f"[{WORKER_ID}] No se encontró solución en el rango [{tarea['start']} - {tarea['end']}]")
+            log.info(
+                "Rango agotado sin solución",
+                extra={
+                    "ctx_event": "range_finished",
+                    "ctx_worker_id": WORKER_ID,
+                    "ctx_task_id": tarea.get("task_id"),
+                    "ctx_start": tarea["start"],
+                    "ctx_end": tarea["end"],
+                },
+            )
         ch.basic_ack(
                 delivery_tag=method.delivery_tag
             )
+        log.info(
+            "Subtarea finalizada",
+            extra={
+                "ctx_event": "task_completed",
+                "ctx_task_id": tarea.get("task_id"),
+            },
+        )
     except Exception as e:
         # Reintentar UNA sola vez y después soltar la tarea (ack), en vez de
         # requeue infinito. Antes, si el gpu-server estaba caído o timeouteaba,
@@ -184,10 +239,32 @@ def callback(ch, method, properties, body):
         # usamos como contador de 1 reintento. Si igual no se mina, el NCT
         # timeoutea y el auto-miner republica un task nuevo.
         already_retried = bool(method.redelivered)
-        log.error(f"[{WORKER_ID}] Error procesando tarea (redelivered={already_retried}): {e}", exc_info=True)
+        log.exception(
+            "Error procesando subtarea",
+            extra={
+                "ctx_event": "task_failed",
+                "ctx_worker_id": WORKER_ID,
+                "ctx_task_id": tarea.get("task_id"),
+                "ctx_redelivered": already_retried,
+            },
+        )
         if already_retried:
+            log.warning(
+                "Subtarea descartada",
+                extra={
+                    "ctx_event": "task_discarded",
+                    "ctx_task_id": tarea.get("task_id"),
+                },
+            )
             ch.basic_ack(delivery_tag=method.delivery_tag)
         else:
+            log.warning(
+                "Reencolando subtarea",
+                extra={
+                    "ctx_event": "task_requeued",
+                    "ctx_task_id": tarea.get("task_id"),
+                },
+            )
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 # Escuchamos de la cola 'tareas'
