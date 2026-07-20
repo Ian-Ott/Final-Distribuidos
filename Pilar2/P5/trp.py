@@ -193,6 +193,7 @@ def activate_fallback():
     # SET NX: solo el primer TrP en detectar la caída entra al if.
     if not r.set(FALLBACK_MODE_KEY, "1", nx=True):
         return False
+    original = r.get("difficulty")
     log.warning(
         "Activando fallback CPU",
         extra={
@@ -201,7 +202,6 @@ def activate_fallback():
             "ctx_new_difficulty": FALLBACK_DIFFICULTY,
         },
     )
-    original = r.get("difficulty")
     # NX en el save del original: si otro TrP ya lo guardó (no debería pasar
     # con el flag NX de arriba, pero es defensa en profundidad), no lo pisamos.
     if original and original != FALLBACK_DIFFICULTY:
@@ -228,6 +228,8 @@ def restore_from_fallback():
     # Solo el primer TrP en detectar el regreso entra (DEL devuelve 1 si borró).
     if r.delete(FALLBACK_MODE_KEY) == 0:
         return False
+    
+    original = r.get(ORIGINAL_DIFFICULTY_KEY)
     log.info(
         "Restaurando modo GPU",
         extra={
@@ -235,7 +237,6 @@ def restore_from_fallback():
             "ctx_difficulty": original,
         },
     )
-    original = r.get(ORIGINAL_DIFFICULTY_KEY)
     # Si no se guardó el original, o quedó en "0" (puede pasar si el fallback se
     # activó cuando la dificultad ya era "0" por flapping previo), volvemos al
     # default de GPU. Antes esto dejaba la dificultad pegada en "0" para siempre.
@@ -380,6 +381,7 @@ def subdivide_and_publish(tarea: dict):
 # -------------------------
 
 def on_task(ch, method, properties, body):
+    tarea = json.loads(body)
     log.info(
         "Tarea recibida del NCT",
         extra={
@@ -387,7 +389,6 @@ def on_task(ch, method, properties, body):
             "ctx_task_id": tarea.get("task_id"),
         },
     )
-    tarea = json.loads(body)
     subdivide_and_publish(tarea)
 
 channel.basic_consume(queue='tareas_pool', on_message_callback=on_task, auto_ack=True)
