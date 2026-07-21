@@ -18,6 +18,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const buyerPublicKey = session.publicKey;
 
   await settleDueOperations();
+  //funcion que libera reservas vencidas
+  await prisma.payment.updateMany({
+    where: {
+        status: "PENDING",
+        ticketId: { not: null },
+        reservedUntil: {
+            lt: new Date(),
+        },
+    },
+    data: {
+        status: "EXPIRED",
+    },
+});
 
   const event = await prisma.event.findUnique({
     where: { id: eventId },
@@ -51,7 +64,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           eventId,
           listingId: null,
           ticketId: { not: null },
-          status: { in: ["PENDING", "APPROVED"] },
+          OR: [
+            {
+                status: "APPROVED",
+            },
+            {
+              //los pagos pendientes bloquean la entrada y los pagos pendientes vencidos deja de bloquear
+                status: "PENDING",
+                reservedUntil: {
+                    gt: new Date(),
+                },
+            },
+          ],
         },
         select: { ticketId: true },
       });
@@ -70,7 +94,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       orderBy: { ticketNumber: "asc" },
     });
     if (!ticket) return null;
-
+    //se agrega un tiempo de expiracion del pago en caso que no se complete
+    const reservationExpires = new Date(Date.now() + 10 * 60 * 1000);
     const payment = await tx.payment.create({
       data: {
         userId: buyerUserId,
@@ -78,6 +103,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         ticketId: ticket.id,
         amount: event.price,
         status: "PENDING",
+        reservedUntil: reservationExpires,
       },
     });
 
@@ -111,6 +137,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       amount: event.price,
       eventId,
       buyerEmail: user.email,
+      reservedUntil: payment.reservedUntil,
     });
 
     await prisma.payment.update({

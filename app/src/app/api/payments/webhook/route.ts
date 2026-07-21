@@ -147,7 +147,19 @@ async function handleApproved(
     });
     return NextResponse.json({ error: "no_ticket_reserved" }, { status: 500 });
   }
-
+  //se verifica que despues del pago la reserva siga vigente
+  if (
+    payment.status === "EXPIRED" ||
+    (
+        payment.reservedUntil &&
+        payment.reservedUntil < new Date()
+    )
+  ) {
+      return NextResponse.json(
+          { error: "reservation_expired" },
+          { status: 409 }
+      );
+  }
   // Reventa: validamos que el listing siga ACTIVE (race contra cancelación
   // o otra compra simultánea).
   const isResale = payment.listingId !== null;

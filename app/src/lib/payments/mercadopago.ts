@@ -21,6 +21,7 @@ export interface CreatePreferenceInput {
   amount: number;
   eventId: string;
   buyerEmail: string;
+  reservedUntil: Date;
 }
 
 export async function createPreference(input: CreatePreferenceInput) {
@@ -46,6 +47,9 @@ export async function createPreference(input: CreatePreferenceInput) {
           currency_id: "ARS",
         },
       ],
+      expires: true,
+      expiration_date_from: new Date().toISOString(),
+      expiration_date_to: input.reservedUntil.toISOString(),
       ...(isSandbox ? {} : { payer: { email: input.buyerEmail } }),
       external_reference: input.paymentId,
       back_urls: {

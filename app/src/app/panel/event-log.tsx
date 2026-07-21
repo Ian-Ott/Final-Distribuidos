@@ -103,7 +103,10 @@ function truncate(s: string, n = 48): string {
 
 function formatTime(ts: number) {
   try {
-    return new Date(ts * 1000).toLocaleTimeString("es-AR", {
+    return new Date(ts * 1000).toLocaleString("es-AR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
