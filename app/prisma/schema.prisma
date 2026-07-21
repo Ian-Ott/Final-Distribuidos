@@ -91,6 +91,7 @@ model Payment {
   amount           Float
   currency         String   @default("ARS")
   status           String   @default("PENDING") // PENDING | APPROVED | REJECTED | CANCELLED | REFUNDED
+  reservedUntil   DateTime?
   // IDs de MercadoPago
   mpPreferenceId   String?  @unique
   mpPaymentId      String?  @unique
