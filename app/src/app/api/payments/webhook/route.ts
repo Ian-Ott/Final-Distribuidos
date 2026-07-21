@@ -133,6 +133,8 @@ async function handleApproved(
     ticketId: string | null;
     listingId: string | null;
     nctOpRef: string | null;
+    status: string;
+    reservedUntil: Date | null;
     event: { organizer: { publicKey: string } };
     user: { publicKey: string };
   },
