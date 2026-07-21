@@ -17,7 +17,18 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const buyerPublicKey = session.publicKey;
 
   await settleDueOperations();
-
+  await prisma.payment.updateMany({
+    where: {
+      status: "PENDING",
+      listingId: { not: null },
+      reservedUntil: {
+        lt: new Date(),
+      },
+    },
+    data: {
+      status: "EXPIRED",
+    },
+  });
   const listing = await prisma.ticketListing.findUnique({
     where: { id: listingId },
     include: {
@@ -62,14 +73,24 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       const activePayment = await tx.payment.findFirst({
         where: {
           listingId: listing.id,
-          status: { in: ["PENDING", "APPROVED"] },
+          OR: [
+            {
+              status: "APPROVED",
+            },
+            {
+              status: "PENDING",
+              reservedUntil: {
+                gt: new Date(),
+              },
+            },
+          ],
         },
         select: { id: true },
       });
       if (activePayment) {
         return null;
       }
-
+      const reservationExpires = new Date(Date.now() + 10 * 60 * 1000);
       return tx.payment.create({
         data: {
           userId: buyerUserId,
@@ -79,6 +100,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           amount: listing.price,
           currency: listing.currency,
           status: "PENDING",
+          reservedUntil: reservationExpires,
         },
       });
     });
@@ -135,6 +157,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       amount: listing.price,
       eventId: listing.ticket.eventId,
       buyerEmail: user.email,
+      reservedUntil: payment.reservedUntil!,
     });
 
     await prisma.payment.update({
