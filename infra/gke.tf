@@ -53,8 +53,11 @@ resource "google_container_node_pool" "apps" {
   location = var.zone
   cluster  = google_container_cluster.primary.name
 
-  node_count = 2
-
+  autoscaling {
+    min_node_count = 0
+    max_node_count = 5
+  }
+  initial_node_count = 1
   node_config {
     machine_type = "e2-medium"
     spot         = true
