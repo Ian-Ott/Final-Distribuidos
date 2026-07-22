@@ -49,4 +49,6 @@ jobs:
         run: tofu plan -var="project_id=${{ secrets.GCP_PROJECT_ID }}" -out=plan.tfplan
 
       - name: Apply
-        run: tofu apply plan.tfplan
+        env:
+          TF_LOG: DEBUG
+        run: tofu apply -no-color plan.tfplan
