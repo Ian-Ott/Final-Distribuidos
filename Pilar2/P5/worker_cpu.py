@@ -10,7 +10,7 @@ import logging
 
 import observability as obs
 from observability import SERVICE_UP
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Histogram, Gauge
 
 # Este archivo es un minero de GPU... digo, de CPU.
 # Su único trabajo es recibir un desafío matemático, resolverlo por fuerza bruta, y reportar la solución.
