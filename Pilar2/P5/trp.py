@@ -280,13 +280,13 @@ def monitor_loop():
                 scale_cpu_workers(CPU_WORKER_REPLICAS)
             else:
                 if in_fallback:
-                log.info(
-                    "GPU nuevamente disponible",
-                    extra={
-                        "ctx_event": "gpu_online",
-                    },
-                )
-                restore_from_fallback()
+                    log.info(
+                        "GPU nuevamente disponible",
+                        extra={
+                            "ctx_event": "gpu_online",
+                        },
+                    )
+                    restore_from_fallback()
         except Exception as e:
             log.error(f"monitor_loop iter fallo (sigo intentando): {e}")
         
