@@ -267,15 +267,19 @@ def monitor_loop():
             # Reflejar el estado en Prometheus en cada iteración.
             TRP_GPU_ALIVE.set(1 if gpu_alive else 0)
             TRP_FALLBACK_ACTIVE.set(1 if in_fallback else 0)
-            if not gpu_alive and not in_fallback:
-                log.warning(
-                    "GPU no disponible",
-                    extra={
-                        "ctx_event": "gpu_offline",
-                    },
-                )
-                activate_fallback()
-            elif gpu_alive and in_fallback:
+            if not gpu_alive:
+                if not in_fallback:
+                    log.warning(
+                        "GPU no disponible",
+                        extra={
+                            "ctx_event": "gpu_offline",
+                        },
+                    )
+                    activate_fallback()
+                 # asegurar que los workers estén levantados
+                scale_cpu_workers(CPU_WORKER_REPLICAS)
+            else:
+                if in_fallback:
                 log.info(
                     "GPU nuevamente disponible",
                     extra={
