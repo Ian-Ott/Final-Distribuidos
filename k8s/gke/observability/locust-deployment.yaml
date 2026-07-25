@@ -23,9 +23,9 @@ spec:
         pool: monitoring
 
       tolerations:
-      - key: pool
+      - key: monitoring
         operator: Equal
-        value: monitoring
+        value: "true"
         effect: NoSchedule
 
       containers:
