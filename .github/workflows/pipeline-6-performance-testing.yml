@@ -46,7 +46,7 @@ jobs:
           docker build \
             -t us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }} \
             -t us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest \
-            docker/locust
+            /locust
 
       - name: Push imagen
         run: |
