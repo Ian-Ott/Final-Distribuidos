@@ -31,7 +31,7 @@ spec:
       containers:
       - name: locust
 
-        image: us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${TAG}
+        image: us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest
         imagePullPolicy: Always
 
         args:
