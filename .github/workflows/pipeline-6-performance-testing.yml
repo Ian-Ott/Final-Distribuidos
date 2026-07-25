@@ -1,0 +1,68 @@
+name: "Pipeline 6 - Performance Testing"
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches: [main]
+    paths:
+      - "locust/**"
+      - "k8s/gke/observability/locust-deployment.yaml"
+      - "k8s/gke/observability/locust-service.yaml"
+      - ".github/workflows/pipeline-6-performance.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  gitleaks:
+    uses: ./.github/workflows/gitleaks.yml
+
+  deploy-locust:
+    name: Build & Deploy Locust
+    needs: gitleaks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Configurar Docker para Artifact Registry
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build imagen Locust
+        run: |
+          docker build \
+            -t us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }} \
+            -t us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest \
+            docker/locust
+
+      - name: Push imagen
+        run: |
+          docker push us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }}
+          docker push us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest
+
+      - name: Deploy Locust
+        run: |
+          kubectl apply -f k8s/gke/observability/locust-service.yaml
+          kubectl apply -f k8s/gke/observability/locust-deployment.yaml
+
+      - name: Actualizar imagen
+        run: |
+          kubectl -n observability set image deployment/locust \
+            locust=us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }}
+
+      - name: Esperar rollout
+        run: |
+          kubectl -n observability rollout status deployment/locust --timeout=300s

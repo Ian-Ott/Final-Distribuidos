@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: locust
+  namespace: observability
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: locust
+
+  template:
+    metadata:
+      labels:
+        app: locust
+
+    spec:
+
+      nodeSelector:
+        pool: monitoring
+
+      tolerations:
+      - key: pool
+        operator: Equal
+        value: monitoring
+        effect: NoSchedule
+
+      containers:
+      - name: locust
+
+        image: us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${TAG}
+        imagePullPolicy: Always
+
+        args:
+          - -f
+          - /home/locust/locustfile.py
+          - --host=http://blockchain-nct.sdypp.svc.cluster.local
+          - --web-host=0.0.0.0
+
+        ports:
+        - containerPort: 8089
+
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+
+          limits:
+            cpu: "1"
+            memory: 1Gi
