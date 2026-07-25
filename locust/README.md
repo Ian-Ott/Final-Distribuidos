@@ -2,10 +2,7 @@
 
 ---
 1. Ejecutar el siguiente comando
-kubectl port-forward svc/blockchain-nct 8000:80 -n sdypp
-
-Luego en maquina local:
-locust -f locustfile.py --host=http://127.0.0.1:8000
+kubectl port-forward -n observability deployment/locust 8089:8089
 
 2. Abrir interfaz de locust y seleccionar carga
 
