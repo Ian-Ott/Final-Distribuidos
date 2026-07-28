@@ -7,6 +7,8 @@ import json
 import time
 import threading
 import os
+import ctypes
+from ctypes import byref, c_int, c_char
 
 import observability as obs
 from observability import SERVICE_UP
@@ -29,6 +31,28 @@ _metrics_app = obs.metrics_asgi_app()
 if _metrics_app is not None:
     app.mount("/metrics", _metrics_app)
 obs.instrument_fastapi(app)
+
+# CUDA Runtime
+libcudart = ctypes.CDLL("libcudart.so")
+
+
+class CudaDeviceProp(ctypes.Structure):
+    _fields_ = [
+        ("name", c_char * 256),
+        ("totalGlobalMem", ctypes.c_size_t),
+        ("sharedMemPerBlock", ctypes.c_size_t),
+        ("regsPerBlock", c_int),
+        ("warpSize", c_int),
+        ("memPitch", ctypes.c_size_t),
+        ("maxThreadsPerBlock", c_int),
+        ("maxThreadsDim", c_int * 3),
+        ("maxGridSize", c_int * 3),
+        ("clockRate", c_int),
+        ("totalConstMem", ctypes.c_size_t),
+        ("major", c_int),
+        ("minor", c_int),
+    ]
+
 
 # -------------------------
 # CONEXIÓN A RABBITMQ (para el heartbeat)
@@ -100,6 +124,7 @@ class MineRequest(BaseModel):
 
 
 def get_gpu_name():
+    # Primer intento: nvidia-smi
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
@@ -107,9 +132,36 @@ def get_gpu_name():
             text=True,
             check=True,
         )
-        return result.stdout.strip().lower()
-    except Exception:
-        return ""
+
+        gpu = result.stdout.strip()
+        if gpu:
+            log.info(f"GPU detectada con nvidia-smi: {gpu}")
+            return gpu.lower()
+
+    except Exception as e:
+        log.warning(f"nvidia-smi no disponible: {e}")
+
+    # Segundo intento: CUDA Runtime API
+    try:
+        device = c_int()
+        err = libcudart.cudaGetDevice(byref(device))
+        if err != 0:
+            raise RuntimeError(f"cudaGetDevice() -> {err}")
+
+        prop = CudaDeviceProp()
+        err = libcudart.cudaGetDeviceProperties(byref(prop), device.value)
+        if err != 0:
+            raise RuntimeError(f"cudaGetDeviceProperties() -> {err}")
+
+        gpu = prop.name.decode().strip()
+        log.info(f"GPU detectada con CUDA: {gpu}")
+        return gpu.lower()
+
+    except Exception as e:
+        log.warning(f"No se pudo detectar la GPU con CUDA: {e}")
+
+    log.warning("No fue posible detectar la GPU")
+    return ""
 
 
 def select_binary(gpu):
