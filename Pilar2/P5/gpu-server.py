@@ -8,7 +8,7 @@ import time
 import threading
 import os
 import ctypes
-from ctypes import byref, c_int, c_char
+from ctypes import byref, c_int, c_char, util
 
 import observability as obs
 from observability import SERVICE_UP
