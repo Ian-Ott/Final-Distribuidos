@@ -100,12 +100,16 @@ class MineRequest(BaseModel):
 
 
 def get_gpu_name():
-    result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-        capture_output=True,
-        text=True
-    )
-    return result.stdout.strip().lower()
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip().lower()
+    except Exception:
+        return ""
 
 
 def select_binary(gpu):
