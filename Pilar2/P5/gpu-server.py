@@ -8,7 +8,8 @@ import time
 import threading
 import os
 import ctypes
-from ctypes import byref, c_int, c_char, util
+from ctypes import byref, c_int, c_char
+from ctypes.util import find_library
 
 import observability as obs
 from observability import SERVICE_UP
@@ -33,7 +34,7 @@ if _metrics_app is not None:
 obs.instrument_fastapi(app)
 
 # CUDA Runtime
-path = ctypes.util.find_library("cudart")
+path = find_library("cudart")
 
 if path is None:
     path = "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12"
