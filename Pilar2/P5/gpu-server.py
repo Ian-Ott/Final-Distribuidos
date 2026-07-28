@@ -33,7 +33,12 @@ if _metrics_app is not None:
 obs.instrument_fastapi(app)
 
 # CUDA Runtime
-libcudart = ctypes.CDLL("libcudart.so")
+path = ctypes.util.find_library("cudart")
+
+if path is None:
+    path = "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12"
+
+libcudart = ctypes.CDLL(path)
 
 
 class CudaDeviceProp(ctypes.Structure):
