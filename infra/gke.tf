@@ -47,9 +47,56 @@ resource "google_container_node_pool" "infra" {
   }
 }
 
-# Node pool para aplicaciones (NCT, TrP, Frontend, Postgres, workers CPU)
-resource "google_container_node_pool" "apps" {
-  name     = "apps"
+# ============================================================================
+# Node pool permanente para la aplicación.
+# Acá viven los componentes críticos:
+# - Frontend
+# - NCT
+# - TrP
+# - Postgres
+#
+# No usa Spot para evitar que la aplicación completa quede caída cuando
+# Google retire instancias Spot.
+# ============================================================================
+resource "google_container_node_pool" "apps_base" {
+  name     = "apps-base"
+  location = var.zone
+  cluster  = google_container_cluster.primary.name
+
+  node_count = 1
+
+  node_config {
+    machine_type = "e2-medium"
+    disk_type    = "pd-standard"
+    disk_size_gb = 50
+
+    labels = {
+      pool = "apps-base"
+    }
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+    ]
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+  }
+}
+
+# ============================================================================
+# Node pool Spot para escalar capacidad.
+#
+# Acá deberían ejecutarse únicamente:
+# - Workers CPU
+# - Jobs
+# - Réplicas temporales
+#
+# Si Google elimina estas VMs, la aplicación sigue funcionando gracias al
+# pool apps-base.
+# ============================================================================
+resource "google_container_node_pool" "apps_spot" {
+  name     = "apps-spot"
   location = var.zone
   cluster  = google_container_cluster.primary.name
 
@@ -57,13 +104,15 @@ resource "google_container_node_pool" "apps" {
     min_node_count = 0
     max_node_count = 5
   }
+
   initial_node_count = 1
+
   node_config {
     machine_type = "e2-medium"
     spot         = true
 
     labels = {
-      pool = "apps"
+      pool = "apps-spot"
     }
 
     oauth_scopes = [

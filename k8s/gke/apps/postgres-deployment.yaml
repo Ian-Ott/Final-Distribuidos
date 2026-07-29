@@ -16,7 +16,7 @@ spec:
         app: postgres
     spec:
       nodeSelector:
-        pool: apps
+        pool: apps-base
       containers:
         - name: postgres
           image: postgres:17-alpine

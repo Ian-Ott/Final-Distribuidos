@@ -19,7 +19,7 @@ spec:
         prometheus.io/path: "/api/metrics"
     spec:
       nodeSelector:
-        pool: apps
+        pool: apps-base
       containers:
         - name: frontend
           image: IMAGE_TAG

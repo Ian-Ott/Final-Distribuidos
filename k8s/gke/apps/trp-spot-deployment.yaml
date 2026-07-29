@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blockchain-trp
+  namespace: sdypp
+spec:
+  # 2 réplicas según consigna del TP. Es seguro porque:
+  # - subdivide_and_publish y heartbeat_consumer consumen de colas RabbitMQ,
+  #   que entrega cada mensaje a una sola réplica (round-robin nativo).
+  # - monitor_loop usa Redis SET NX para que solo la primera réplica que
+  #   detecta cambio de estado del gpu-server haga el trabajo de transición.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: blockchain-trp
+  template:
+    metadata:
+      labels:
+        app: blockchain-trp
+      annotations:
+        # TrP no es HTTP: observability.start_metrics_server() abre /metrics en 9000.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+    spec:
+      serviceAccountName: trp-sa
+      nodeSelector:
+        pool: apps-spot
+      containers:
+        - name: trp
+          image: IMAGE_TAG
+          ports:
+            - name: metrics
+              containerPort: 9000
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

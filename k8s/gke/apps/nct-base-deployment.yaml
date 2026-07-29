@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blockchain-nct
+  namespace: sdypp
+spec:
+  # 2 réplicas según consigna del TP ("al menos 2 réplicas por servicio").
+  # Es seguro porque acquire_mining_lock() usa SET NX EX atómico con token
+  # único, y release_mining_lock() libera con un script Lua que verifica el
+  # token (patrón Redlock simplificado). Solo un pod minera a la vez; el otro
+  # queda dormido reintentando el lock. Si el pod activo muere mid-minado, el
+  # TTL del lock (MINING_TIMEOUT_SECONDS + 120s) expira y el otro toma el
+  # relevo automáticamente — esto es la resiliencia real que pide el TP.
+  # Los endpoints HTTP (transfer, mint, GETs) se balancean entre ambos pods.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Durante un rollout pueden coexistir hasta 3 pods (2 viejos + 1 nuevo)
+      # o 1 pod (1 viejo + 0 nuevo). El lock garantiza correctitud en ambos
+      # extremos. maxSurge=1/maxUnavailable=1 mantiene servicio continuo.
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: blockchain-nct
+  template:
+    metadata:
+      labels:
+        app: blockchain-nct
+      annotations:
+        # El NCT expone /metrics en su mismo puerto HTTP (8000).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector:
+        pool: apps-base
+      containers:
+        - name: nct
+          image: IMAGE_TAG
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          # Liveness en /healthz (NO toca Redis): así k8s solo reinicia el pod
+          # si el proceso uvicorn se colgó de verdad, no cuando Redis está
+          # caído (con /status entraba en reinicio en bucle inútil — bug C4).
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # Readiness sí mira /status (toca Redis): saca el pod del Service
+          # mientras Redis no responda, sin matarlo.
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
