@@ -47,17 +47,63 @@ class CudaDeviceProp(ctypes.Structure):
         ("name", c_char * 256),
         ("totalGlobalMem", ctypes.c_size_t),
         ("sharedMemPerBlock", ctypes.c_size_t),
-        ("regsPerBlock", c_int),
-        ("warpSize", c_int),
+        ("regsPerBlock", ctypes.c_int),
+        ("warpSize", ctypes.c_int),
         ("memPitch", ctypes.c_size_t),
-        ("maxThreadsPerBlock", c_int),
-        ("maxThreadsDim", c_int * 3),
-        ("maxGridSize", c_int * 3),
-        ("clockRate", c_int),
+        ("maxThreadsPerBlock", ctypes.c_int),
+        ("maxThreadsDim", ctypes.c_int * 3),
+        ("maxGridSize", ctypes.c_int * 3),
+        ("clockRate", ctypes.c_int),
         ("totalConstMem", ctypes.c_size_t),
-        ("major", c_int),
-        ("minor", c_int),
+        ("major", ctypes.c_int),
+        ("minor", ctypes.c_int),
+        ("textureAlignment", ctypes.c_size_t),
+        ("texturePitchAlignment", ctypes.c_size_t),
+        ("deviceOverlap", ctypes.c_int),
+        ("multiProcessorCount", ctypes.c_int),
+        ("kernelExecTimeoutEnabled", ctypes.c_int),
+        ("integrated", ctypes.c_int),
+        ("canMapHostMemory", ctypes.c_int),
+        ("computeMode", ctypes.c_int),
+        ("maxTexture1D", ctypes.c_int),
+        ("maxTexture2D", ctypes.c_int * 2),
+        ("maxTexture3D", ctypes.c_int * 3),
+        ("maxTexture2DLayered", ctypes.c_int * 2),
+        ("maxTexture1DLayered", ctypes.c_int * 2),
+        ("surfaceAlignment", ctypes.c_size_t),
+        ("concurrentKernels", ctypes.c_int),
+        ("ECCEnabled", ctypes.c_int),
+        ("pciBusID", ctypes.c_int),
+        ("pciDeviceID", ctypes.c_int),
+        ("pciDomainID", ctypes.c_int),
+        ("tccDriver", ctypes.c_int),
+        ("asyncEngineCount", ctypes.c_int),
+        ("unifiedAddressing", ctypes.c_int),
+        ("memoryClockRate", ctypes.c_int),
+        ("memoryBusWidth", ctypes.c_int),
+        ("l2CacheSize", ctypes.c_int),
+        ("maxThreadsPerMultiProcessor", ctypes.c_int),
+        ("streamPrioritiesSupported", ctypes.c_int),
+        ("globalL1CacheSupported", ctypes.c_int),
+        ("localL1CacheSupported", ctypes.c_int),
+        ("sharedMemPerMultiprocessor", ctypes.c_size_t),
+        ("regsPerMultiprocessor", ctypes.c_int),
+        ("managedMemory", ctypes.c_int),
+        ("isMultiGpuBoard", ctypes.c_int),
+        ("multiGpuBoardGroupID", ctypes.c_int),
     ]
+
+libcudart.cudaGetDevice.argtypes = [
+    ctypes.POINTER(c_int)
+]
+libcudart.cudaGetDevice.restype = c_int
+
+
+libcudart.cudaGetDeviceProperties.argtypes = [
+    ctypes.POINTER(CudaDeviceProp),
+    c_int
+]
+libcudart.cudaGetDeviceProperties.restype = c_int
 
 
 # -------------------------
@@ -130,44 +176,42 @@ class MineRequest(BaseModel):
 
 
 def get_gpu_name():
-    # Primer intento: nvidia-smi
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            check=True,
+
+    device = c_int()
+
+    err = libcudart.cudaGetDevice(
+        ctypes.byref(device)
+    )
+
+    if err != 0:
+        log.warning(
+            f"cudaGetDevice fallo: {err}"
         )
+        return ""
 
-        gpu = result.stdout.strip()
-        if gpu:
-            log.info(f"GPU detectada con nvidia-smi: {gpu}")
-            return gpu.lower()
+    prop = CudaDeviceProp()
 
-    except Exception as e:
-        log.warning(f"nvidia-smi no disponible: {e}")
+    err = libcudart.cudaGetDeviceProperties(
+        ctypes.byref(prop),
+        device.value
+    )
 
-    # Segundo intento: CUDA Runtime API
-    try:
-        device = c_int()
-        err = libcudart.cudaGetDevice(byref(device))
-        if err != 0:
-            raise RuntimeError(f"cudaGetDevice() -> {err}")
+    if err != 0:
+        log.warning(
+            f"cudaGetDeviceProperties fallo: {err}"
+        )
+        return ""
 
-        prop = CudaDeviceProp()
-        err = libcudart.cudaGetDeviceProperties(byref(prop), device.value)
-        if err != 0:
-            raise RuntimeError(f"cudaGetDeviceProperties() -> {err}")
+    gpu = prop.name.decode(
+        "utf-8",
+        errors="ignore"
+    ).strip("\x00")
 
-        gpu = prop.name.decode().strip()
-        log.info(f"GPU detectada con CUDA: {gpu}")
-        return gpu.lower()
+    log.info(
+        f"GPU detectada con CUDA: {gpu}"
+    )
 
-    except Exception as e:
-        log.warning(f"No se pudo detectar la GPU con CUDA: {e}")
-
-    log.warning("No fue posible detectar la GPU")
-    return ""
+    return gpu.lower()
 
 
 def select_binary(gpu):
