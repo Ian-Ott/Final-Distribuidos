@@ -33,6 +33,7 @@ spec:
                   operator: NotIn
                   values:
                   - knode06
+                  - knode05
       containers:
         - name: gpu-server
           image: IMAGE_TAG
