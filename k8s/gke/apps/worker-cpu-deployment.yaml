@@ -17,7 +17,7 @@ spec:
         prometheus.io/port: "9000"
     spec:
       nodeSelector:
-        pool: apps-spot
+        pool: apps-spot 
       containers:
         - name: worker-cpu
           image: IMAGE_TAG
