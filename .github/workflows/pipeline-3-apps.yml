@@ -101,9 +101,15 @@ jobs:
           REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}"
           cd k8s/gke/apps
 
-          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-nct:${{ github.sha }}|" nct-deployment.yaml
-          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-trp:${{ github.sha }}|" trp-deployment.yaml
+          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/frontend:${{ github.sha }}|" frontend-base-deployment.yaml
+          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/frontend:${{ github.sha }}|" frontend-spot-deployment.yaml
+
+          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-nct:${{ github.sha }}|" nct-base-deployment.yaml
+          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-nct:${{ github.sha }}|" nct-spot-deployment.yaml
+
+          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-trp:${{ github.sha }}|" trp-base-deployment.yaml
+          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-trp:${{ github.sha }}|" trp-spot-deployment.yaml
+
           sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-worker-cpu:${{ github.sha }}|" worker-cpu-deployment.yaml
-          sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/frontend:${{ github.sha }}|" frontend-deployment.yaml
 
           kubectl apply -f .
