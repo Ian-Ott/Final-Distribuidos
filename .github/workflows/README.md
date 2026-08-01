@@ -1,6 +1,6 @@
 # CI/CD — GitHub Actions Pipelines 
 
-Cuatro pipelines que despliegan cada capa del sistema independientemente.
+Seis pipelines que despliegan cada capa del sistema independientemente.
 Todos gatean por **Gitleaks** (secret scanning) antes de ejecutar.
 
 ## Pipelines
@@ -43,6 +43,31 @@ Despliega al cluster del profesor:
 1. Build de la imagen `blockchain-worker-gpu`.
 2. Push a Artifact Registry.
 3. Deploy al cluster externo usando kubeconfig de `KUBE_CONFIG_PROFESOR` (secret).
+
+### Pipeline 5 — Observabilidad (`pipeline-5-observability.yml`)
+
+**Trigger:** Push a `k8s/gke/observability/**` o ejecución manual.
+
+Despliega el stack de observabilidad en el cluster GKE:
+1. Autenticación mediante Workload Identity Federation.
+2. Obtención de credenciales del cluster GKE.
+3. Espera a que el node pool `monitoring` esté disponible.
+4. Creación del namespace y RBAC de observabilidad.
+5. Deploy de Prometheus, Grafana, Loki, Tempo, Alloy, Alertmanager y exporters.
+6. Verificación del rollout de Prometheus y Grafana.
+
+También puede ejecutarse automáticamente al finalizar con éxito el **Pipeline 1 - Infraestructura GKE**, garantizando que el node pool `monitoring` ya exista antes del despliegue.
+
+### Pipeline 6 — Performance Testing (`pipeline-6-performance.yml`)
+
+**Trigger:** Push a `locust/**`, `k8s/gke/observability/locust-deployment.yaml`, `k8s/gke/observability/locust-service.yaml` o ejecución manual.
+
+Despliega la infraestructura de pruebas de rendimiento en el cluster GKE:
+1. Build de la imagen `locust`.
+2. Push a Artifact Registry.
+3. Deploy de los recursos de Locust.
+4. Actualización de la imagen del Deployment con el commit actual.
+5. Verificación del rollout del Deployment.
 
 ### Gitleaks (`gitleaks.yml`)
 
