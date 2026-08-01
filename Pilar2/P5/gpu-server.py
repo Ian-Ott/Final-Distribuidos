@@ -116,23 +116,20 @@ def rabbitmq_ssl_context():
     ctx.verify_mode = ssl.CERT_NONE
     return pika.SSLOptions(ctx)
 
-def connect_rabbitmq():
-    while True:
-        try:
-            conn = pika.BlockingConnection(
-                pika.ConnectionParameters(
-                    os.getenv("RABBITMQ_HOST", "rabbitmq"),
-                    port=5671,
-                    ssl_options=rabbitmq_ssl_context(),
-                )
-            )
-            RABBIT_CONNECTED.set(1)
-            log.info("gpu-server conectado a RabbitMQ (TLS)")
-            return conn
-        except Exception:
-            log.warning("Esperando RabbitMQ...")
-            RABBIT_CONNECTED.set(0)
-            time.sleep(3)
+def create_connection():
+    return pika.BlockingConnection(
+        pika.ConnectionParameters(
+            host=os.getenv("RABBITMQ_HOST", "rabbitmq"),
+            port=5671,
+            ssl_options=rabbitmq_ssl_context(),
+
+            heartbeat=30,
+            blocked_connection_timeout=30,
+            socket_timeout=10,
+            connection_attempts=3,
+            retry_delay=2,
+        )
+    )
 
 # -------------------------
 # KEEP-ALIVE via RabbitMQ
@@ -141,29 +138,84 @@ def connect_rabbitmq():
 # El TrP lo consume y setea la key en Redis.
 
 def heartbeat_loop():
-    hb_conn = connect_rabbitmq()
-    hb_ch = hb_conn.channel()
-    hb_ch.queue_declare(queue='heartbeat_gpu')
-    log.info("Heartbeat iniciado")
     while True:
+
+        conn = None
+        channel = None
+
         try:
-            if hb_conn is None or hb_conn.is_closed:
-                hb_conn = connect_rabbitmq()
-                hb_ch = hb_conn.channel()
-                hb_ch.queue_declare(queue="heartbeat_gpu")
-            hb_ch.basic_publish(
-                exchange='',
-                routing_key='heartbeat_gpu',
-                body=json.dumps({"status": "alive", "timestamp": time.time()})
+            log.info("Conectando a RabbitMQ...")
+
+            conn = create_connection()
+            channel = conn.channel()
+
+            channel.queue_declare(
+                queue="heartbeat_gpu",
+                durable=False,
             )
-        except Exception as e:
-            log.exception(e)
+
+            RABBIT_CONNECTED.set(1)
+
+            log.info("Heartbeat iniciado")
+
+            while True:
+
+                channel.basic_publish(
+                    exchange="",
+                    routing_key="heartbeat_gpu",
+                    body=json.dumps(
+                        {
+                            "status": "alive",
+                            "timestamp": time.time(),
+                        }
+                    ),
+                )
+
+                conn.process_data_events()
+
+                time.sleep(10)
+
+        except (
+            pika.exceptions.AMQPConnectionError,
+            pika.exceptions.StreamLostError,
+            pika.exceptions.ConnectionWrongStateError,
+            OSError,
+            EOFError,
+        ) as e:
+
+            RABBIT_CONNECTED.set(0)
+
+            log.warning(
+                f"Conexión RabbitMQ perdida: {e}"
+            )
+
+        except Exception:
+
+            RABBIT_CONNECTED.set(0)
+
+            log.exception(
+                "Error inesperado en heartbeat"
+            )
+
+        finally:
+
             try:
-                hb_conn.close()
-            except:
+                if channel is not None and channel.is_open:
+                    channel.close()
+            except Exception:
                 pass
-            hb_conn = None
-        time.sleep(10)
+
+            try:
+                if conn is not None and conn.is_open:
+                    conn.close()
+            except Exception:
+                pass
+
+            log.info(
+                "Reconectando en 3 segundos..."
+            )
+
+            time.sleep(3)
 
 threading.Thread(target=heartbeat_loop, daemon=True).start()
 SERVICE_UP.labels(service="gpu-server").set(1)
