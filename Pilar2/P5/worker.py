@@ -42,6 +42,10 @@ REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
 WORKER_ID = str(uuid.uuid4())[:8]
 
 GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/mine")
+GPU_REQUEST_ERRORS = Counter(
+    "worker_gpu_request_errors_total",
+    "Errores al llamar al GPU Server"
+)
 
 
 def connect_redis():
@@ -160,16 +164,20 @@ def callback(ch, method, properties, body):
                         "ctx_end": tarea["end"],
                     },
                 )
-                response = requests.post(GPU_SERVER_URL, json=payload, timeout=60)
-                response.raise_for_status()
-                log.info(
-                    "Respuesta recibida del GPU Server",
-                    extra={
-                        "ctx_event": "gpu_response_received",
-                        "ctx_task_id": tarea.get("task_id"),
-                        "ctx_status": response.status_code,
-                    },
-                )
+                try:
+                    response = requests.post(GPU_SERVER_URL, json=payload, timeout=60)
+                    response.raise_for_status()
+                    log.info(
+                        "Respuesta recibida del GPU Server",
+                        extra={
+                            "ctx_event": "gpu_response_received",
+                            "ctx_task_id": tarea.get("task_id"),
+                            "ctx_status": response.status_code,
+                        },
+                    )
+                except Exception:
+                    GPU_REQUEST_ERRORS.inc()
+                    raise
             stdout_data = response.json().get("stdout", "")
 
         nonce = None

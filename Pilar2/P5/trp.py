@@ -31,6 +31,18 @@ TRP_GPU_ALIVE = Gauge("trp_gpu_alive", "1 si el gpu-server tiene heartbeat vivo"
 TRP_SCALE_EVENTS = Counter("trp_cpu_scale_events_total", "Eventos de escalado de worker-cpu", ["action"])
 REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
 RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+TRP_HASHES_ASSIGNED = Counter(
+    "trp_hashes_assigned_total",
+    "Hashes distribuidos por el TRP"
+)
+TRP_SUBDIVISION_SECONDS = Histogram(
+    "trp_subdivision_duration_seconds",
+    "Tiempo en subdividir una tarea"
+)
+TRP_MODE = Gauge(
+    "trp_mode",
+    "0 GPU - 1 CPU"
+)
 
 # -------------------------
 # CONEXIONES
@@ -266,6 +278,7 @@ def monitor_loop():
             in_fallback = r.exists(FALLBACK_MODE_KEY) == 1
             # Reflejar el estado en Prometheus en cada iteración.
             TRP_GPU_ALIVE.set(1 if gpu_alive else 0)
+            TRP_MODE.set(1 if not gpu_alive else 0)
             TRP_FALLBACK_ACTIVE.set(1 if in_fallback else 0)
             if not gpu_alive:
                 if not in_fallback:
@@ -306,79 +319,81 @@ CHUNK_SIZE  = 2_500_000   # cada sub-tarea cubre este rango
 # la fragmenta en chunks y publica cada uno en 'tareas'.
 # Cada chunk se publica como un mensaje separado en [tareas]. RabbitMQ los distribuye entre los workers disponibles automáticamente
 def subdivide_and_publish(tarea: dict):
-    task_id    = tarea.get("task_id")
-    start      = tarea.get("start", 0)
-    end        = tarea.get("end", TOTAL)
-    difficulty = tarea.get("difficulty", r.get("difficulty"))
-    data       = tarea["data"]
+    with TRP_SUBDIVISION_SECONDS.time():
+        task_id    = tarea.get("task_id")
+        start      = tarea.get("start", 0)
+        end        = tarea.get("end", TOTAL)
+        difficulty = tarea.get("difficulty", r.get("difficulty"))
+        data       = tarea["data"]
 
-    total_range = end - start
-    n_chunks    = math.ceil(total_range / CHUNK_SIZE)
+        total_range = end - start
+        n_chunks    = math.ceil(total_range / CHUNK_SIZE)
 
-    # Continuamos la traza que arrancó el NCT (contexto embebido en el payload).
-    parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
-    span_cm = tracer.start_as_current_span("trp_subdivide", context=parent_ctx) \
-        if parent_ctx is not None else tracer.start_as_current_span("trp_subdivide")
-    with span_cm as span:
-        span.set_attribute("task_id", str(task_id))
-        span.set_attribute("chunks", n_chunks)
-        log.info(
-            "Subdividiendo tarea",
-            extra={
-                "ctx_event": "task_subdivided",
-                "ctx_task_id": task_id,
-                "ctx_chunks": n_chunks,
-                "ctx_difficulty": difficulty,
-            },
-        )
-
-        # El contexto a propagar a los workers se toma del span actual.
-        trace_ctx = obs.inject_trace_context()
-        for i in range(n_chunks):
-            chunk_start = start + i * CHUNK_SIZE
-            chunk_end   = min(chunk_start + CHUNK_SIZE - 1, end)
-
-            subtarea = {
-                "task_id":    task_id,
-                "difficulty": difficulty,
-                "data":       data,
-                "start":      chunk_start,
-                "end":        chunk_end,
-                "_trace":     trace_ctx,
-            }
+        # Continuamos la traza que arrancó el NCT (contexto embebido en el payload).
+        parent_ctx = obs.extract_trace_context(tarea.get("_trace"))
+        span_cm = tracer.start_as_current_span("trp_subdivide", context=parent_ctx) \
+            if parent_ctx is not None else tracer.start_as_current_span("trp_subdivide")
+        with span_cm as span:
+            span.set_attribute("task_id", str(task_id))
+            span.set_attribute("chunks", n_chunks)
             log.info(
-                "Publicando chunk",
+                "Subdividiendo tarea",
                 extra={
-                    "ctx_event": "chunk_published",
+                    "ctx_event": "task_subdivided",
                     "ctx_task_id": task_id,
-                    "ctx_chunk": i,
-                    "ctx_start": chunk_start,
-                    "ctx_end": chunk_end,
+                    "ctx_chunks": n_chunks,
+                    "ctx_difficulty": difficulty,
                 },
             )
-            channel.basic_publish(
-                exchange='',
-                routing_key='tareas',
-                body=json.dumps(subtarea)
-            )
-            TRP_CHUNKS.inc()
-        log.info(
-            "Todos los chunks publicados",
-            extra={
-                "ctx_event": "all_chunks_published",
-                "ctx_task_id": task_id,
-                "ctx_chunks": n_chunks,
-            },
-        )
 
-    TRP_TASKS.inc()
-    r.rpush("logs", json.dumps({
-        "timestamp": time.time(),
-        "event":     "trp_subdividio_tarea",
-        "task_id":   task_id,
-        "chunks":    n_chunks,
-        "difficulty": difficulty
-    }))
+            # El contexto a propagar a los workers se toma del span actual.
+            trace_ctx = obs.inject_trace_context()
+            for i in range(n_chunks):
+                chunk_start = start + i * CHUNK_SIZE
+                chunk_end   = min(chunk_start + CHUNK_SIZE - 1, end)
+
+                subtarea = {
+                    "task_id":    task_id,
+                    "difficulty": difficulty,
+                    "data":       data,
+                    "start":      chunk_start,
+                    "end":        chunk_end,
+                    "_trace":     trace_ctx,
+                }
+                log.info(
+                    "Publicando chunk",
+                    extra={
+                        "ctx_event": "chunk_published",
+                        "ctx_task_id": task_id,
+                        "ctx_chunk": i,
+                        "ctx_start": chunk_start,
+                        "ctx_end": chunk_end,
+                    },
+                )
+                TRP_HASHES_ASSIGNED.inc(chunk_end - chunk_start + 1)
+                channel.basic_publish(
+                    exchange='',
+                    routing_key='tareas',
+                    body=json.dumps(subtarea)
+                )
+                TRP_CHUNKS.inc()
+            log.info(
+                "Todos los chunks publicados",
+                extra={
+                    "ctx_event": "all_chunks_published",
+                    "ctx_task_id": task_id,
+                    "ctx_chunks": n_chunks,
+                },
+            )
+
+        TRP_TASKS.inc()
+        r.rpush("logs", json.dumps({
+            "timestamp": time.time(),
+            "event":     "trp_subdividio_tarea",
+            "task_id":   task_id,
+            "chunks":    n_chunks,
+            "difficulty": difficulty
+        }))
 
 # -------------------------
 # CONSUMER: tareas_pool

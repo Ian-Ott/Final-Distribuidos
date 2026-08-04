@@ -26,6 +26,18 @@ GPU_MINE_SECONDS = Histogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
 )
 RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+GPU_BUSY = Gauge(
+    "gpu_busy",
+    "1 mientras la GPU está minando"
+)
+GPU_HASHES_REQUESTED = Counter(
+    "gpu_hashes_requested_total",
+    "Hashes enviados al binario CUDA"
+)
+GPU_ERRORS = Counter(
+    "gpu_errors_total",
+    "Errores del binario CUDA"
+)
 
 app = FastAPI()
 _metrics_app = obs.metrics_asgi_app()
@@ -283,6 +295,7 @@ def select_binary(gpu):
 
 @app.post("/mine")
 def mine(req: MineRequest):
+    GPU_HASHES_REQUESTED.inc(req.end - req.start + 1)
     GPU_MINE_REQUESTS.inc()
     gpu = get_gpu_name()
     log.info(f"GPU detectada: {gpu}")
@@ -292,18 +305,22 @@ def mine(req: MineRequest):
         f"Nuevo trabajo: dificultad={req.difficulty} "
         f"rango={req.start}-{req.end}"
     )
-    with GPU_MINE_SECONDS.time():
-        result = subprocess.run(
-            [
-                binary,
-                req.data,
-                req.difficulty,
-                str(req.start),
-                str(req.end)
-            ],
-            capture_output=True,
-            text=True
-        )
+    GPU_BUSY.set(1)
+    try:
+        with GPU_MINE_SECONDS.time():
+            result = subprocess.run(
+                [
+                    binary,
+                    req.data,
+                    req.difficulty,
+                    str(req.start),
+                    str(req.end)
+                ],
+                capture_output=True,
+                text=True
+            )
+    finally:
+        GPU_BUSY.set(0)
 
     if "Nonce encontrado:" in (result.stdout or ""):
         log.info("Nonce encontrado!!!")
@@ -312,6 +329,7 @@ def mine(req: MineRequest):
         log.info("Trabajo terminado sin solución")
 
     if result.returncode != 0:
+        GPU_ERRORS.inc()
         log.error(
             f"CUDA terminó con código {result.returncode}: "
             f"{result.stderr}"

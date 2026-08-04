@@ -36,6 +36,11 @@ REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
 RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
+HASHES_TOTAL = Counter(
+    "worker_hashes_total",
+    "Hashes calculados",
+    ["worker_type"]
+)
 
 # Retry loop para conectarse a rabbitmq
 def rabbitmq_ssl_context():
@@ -130,11 +135,15 @@ threading.Thread(target=heartbeat_loop, daemon=True).start()
 # El rango start/end es el fragmento que le asignó el TrP a este worker. Si no encuentra nada en ese rango, devuelve None, None.
 # Si el hash resultante empieza con el prefijo de dificultad (ej: "00"), se encontró la solución
 def mine_cpu(data: str, difficulty: str, start: int, end: int):
+    hashes = 0
     for nonce in range(start, end + 1):
+        hashes += 1
         text = data + str(nonce)
         h = hashlib.md5(text.encode()).hexdigest()
         if h.startswith(difficulty):
+            HASHES_TOTAL.labels(worker_type=WORKER_TYPE).inc(hashes)
             return nonce, h
+    HASHES_TOTAL.labels(worker_type=WORKER_TYPE).inc(hashes)
     return None, None
 
 # Cuando RabbitMQ entrega un mensaje de la cola tareas, llama a esta función.
