@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: blockchain-trp
+  name: blockchain-trp-base
   namespace: sdypp
 spec:
   # 2 réplicas según consigna del TP. Es seguro porque:
@@ -9,7 +9,7 @@ spec:
   #   que entrega cada mensaje a una sola réplica (round-robin nativo).
   # - monitor_loop usa Redis SET NX para que solo la primera réplica que
   #   detecta cambio de estado del gpu-server haga el trabajo de transición.
-  replicas: 2
+  replicas: 1
   strategy:
     type: RollingUpdate
     rollingUpdate:

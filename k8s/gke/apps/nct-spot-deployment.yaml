@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: blockchain-nct
+  name: blockchain-nct-spot
   namespace: sdypp
 spec:
   # 2 réplicas según consigna del TP ("al menos 2 réplicas por servicio").
@@ -12,7 +12,7 @@ spec:
   # TTL del lock (MINING_TIMEOUT_SECONDS + 120s) expira y el otro toma el
   # relevo automáticamente — esto es la resiliencia real que pide el TP.
   # Los endpoints HTTP (transfer, mint, GETs) se balancean entre ambos pods.
-  replicas: 2
+  replicas: 1
   strategy:
     type: RollingUpdate
     rollingUpdate:
