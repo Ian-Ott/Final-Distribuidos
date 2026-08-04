@@ -10,7 +10,7 @@ import urllib.request
 
 import observability as obs
 from observability import SERVICE_UP
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers.
 # El NCT dice "minà este bloque", y el TrP se encarga de dividir ese trabajo, distribuirlo, y decidir si hay que cambiar de modo GPU a CPU.
