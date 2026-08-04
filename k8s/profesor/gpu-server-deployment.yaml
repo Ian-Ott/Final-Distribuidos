@@ -24,6 +24,9 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
       affinity:
           nodeAffinity:
             requiredDuringSchedulingIgnoredDuringExecution:
@@ -36,6 +39,12 @@ spec:
                   - knode05
       containers:
         - name: gpu-server
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
           image: IMAGE_TAG
           command: ["uvicorn", "gpu-server:app", "--host", "0.0.0.0", "--port", "8000"]
           ports:
