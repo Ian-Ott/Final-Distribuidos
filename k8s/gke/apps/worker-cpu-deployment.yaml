@@ -16,10 +16,19 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
       nodeSelector:
         pool: apps-spot 
       containers:
         - name: worker-cpu
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
           image: IMAGE_TAG
           ports:
             - name: metrics

@@ -1,12 +1,13 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: rabbitmq
   namespace: sdypp
 spec:
+  serviceName: rabbitmq
   replicas: 1
-  strategy:
-    type: Recreate
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels:
       app: rabbitmq
@@ -19,10 +20,21 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "15692"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
       nodeSelector:
         pool: infra
       containers:
         - name: rabbitmq
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+              - ALL
           image: rabbitmq:3-management
           ports:
             - containerPort: 5671

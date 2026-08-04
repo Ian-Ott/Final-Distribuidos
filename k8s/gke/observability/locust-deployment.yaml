@@ -21,6 +21,9 @@ spec:
         app: locust
 
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
 
       nodeSelector:
         pool: monitoring
@@ -33,6 +36,12 @@ spec:
 
       containers:
       - name: locust
+        securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
 
         image: us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest
         imagePullPolicy: Always

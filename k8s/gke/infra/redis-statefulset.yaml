@@ -1,12 +1,13 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
   namespace: sdypp
 spec:
+  serviceName: redis
   replicas: 1
-  strategy:
-    type: Recreate
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels:
       app: redis
@@ -15,11 +16,22 @@ spec:
       labels:
         app: redis
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
       nodeSelector:
         pool: infra
       containers:
         - name: redis
           image: redis:7
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+              - ALL
           # --maxmemory por debajo del limit del cgroup (256Mi) para que Redis
           # se autolimite ANTES de que el kernel lo OOM-killee. noeviction: si
           # igual se llenara, los writes fallan ruidosamente en vez de evictar

@@ -27,11 +27,20 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
       serviceAccountName: trp-sa
       nodeSelector:
         pool: apps-base
       containers:
         - name: trp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
           image: IMAGE_TAG
           ports:
             - name: metrics
