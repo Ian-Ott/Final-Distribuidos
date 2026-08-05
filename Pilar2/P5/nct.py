@@ -23,7 +23,8 @@ from prometheus_client import Counter, Gauge, Histogram
 
 # API REST que expone endpoints para el mundo exterior y coordina todo el proceso de creación de bloques.
 log = obs.setup_logging("nct")
-
+r = None
+channel = None
 
 def connect_redis():
     while True:
