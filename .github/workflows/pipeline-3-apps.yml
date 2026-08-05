@@ -21,9 +21,32 @@ jobs:
   gitleaks:
     uses: ./.github/workflows/gitleaks.yml
 
+  unit-tests:
+    name: Unit Tests
+    needs: gitleaks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-mock requests redis pika prometheus_client opentelemetry-api opentelemetry-sdk
+
+      - name: Run unit tests
+        run: |
+          pytest Pilar2/P5/tests/unitarios -v
+      
   build-and-push:
     name: Build ${{ matrix.name }}
-    needs: gitleaks
+    needs: 
+      - gitleaks
+      - unit-tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -113,3 +136,21 @@ jobs:
           sed -i "s|image: IMAGE_TAG|image: ${REGISTRY}/blockchain-worker-cpu:${{ github.sha }}|" worker-cpu-deployment.yaml
 
           kubectl apply -f .
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install pytest requests redis pika
+
+      - name: Wait for deployments
+        run: |
+          kubectl rollout status deployment/blockchain-nct-base -n sdypp
+          kubectl rollout status deployment/blockchain-trp-base -n sdypp
+          kubectl rollout status deployment/frontend-base -n sdypp
+
+      - name: Run integration tests
+        run: |
+          pytest Pilar2/P5/tests/integracion -v

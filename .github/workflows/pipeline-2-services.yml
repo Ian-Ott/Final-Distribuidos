@@ -51,3 +51,8 @@ jobs:
 
       - name: Deploy infrastructure services
         run: kubectl apply -f k8s/gke/infra/
+      
+      - name: Wait infrastructure
+        run: |
+          kubectl rollout status statefulset/rabbitmq -n sdypp --timeout=180s
+          kubectl rollout status statefulset/redis -n sdypp --timeout=180s
