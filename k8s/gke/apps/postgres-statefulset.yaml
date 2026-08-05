@@ -23,11 +23,7 @@ spec:
       containers:
         - name: postgres
           securityContext:
-            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
-            capabilities:
-              drop:
-              - ALL
           image: postgres:17-alpine
           ports:
             - containerPort: 5432
