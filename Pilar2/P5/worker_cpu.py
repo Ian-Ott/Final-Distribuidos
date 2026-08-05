@@ -17,7 +17,19 @@ from prometheus_client import Counter, Histogram, Gauge
 # No sabe nada de bloques, transacciones ni blockchain — solo mina
 log = obs.setup_logging("worker-cpu")
 
-
+WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
+WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
+WORKER_TASK_SECONDS = Histogram(
+    "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
+    ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
+)
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+HASHES_TOTAL = Counter(
+    "worker_hashes_total",
+    "Hashes calculados",
+    ["worker_type"]
+)
 WORKER_TYPE = "cpu"
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
@@ -250,12 +262,6 @@ def main():
     global connection
     global channel
 
-    global WORKER_TASKS
-    global WORKER_SOLUTIONS
-    global WORKER_TASK_SECONDS
-    global RABBIT_CONNECTED
-    global REDIS_CONNECTED
-    global HASHES_TOTAL
     # -------------------------
     # OBSERVABILIDAD
     # -------------------------
@@ -263,19 +269,7 @@ def main():
     obs.instrument_redis()
     tracer = obs.get_tracer("worker-cpu")
     obs.start_metrics_server()
-    WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
-    WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
-    WORKER_TASK_SECONDS = Histogram(
-        "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
-        ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
-    )
-    REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
-    RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-    HASHES_TOTAL = Counter(
-        "worker_hashes_total",
-        "Hashes calculados",
-        ["worker_type"]
-    )
+    
     r = connect_redis()
     connection = connect_rabbitmq()
 

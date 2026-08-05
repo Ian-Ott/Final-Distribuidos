@@ -17,7 +17,19 @@ from prometheus_client import Counter, Histogram, Gauge
 # vía HTTP y solo reporta el resultado.
 log = obs.setup_logging("worker-gpu")
 
-
+WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
+WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
+WORKER_TASK_SECONDS = Histogram(
+    "worker_task_duration_seconds", "Duracion del minado de una sub-tarea (incluye HTTP a gpu-server)",
+    ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+)
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/mine")
+GPU_REQUEST_ERRORS = Counter(
+    "worker_gpu_request_errors_total",
+    "Errores al llamar al GPU Server"
+)
 WORKER_TYPE = "gpu"
 # Identificador único de este worker — antes no existía, por eso no había
 # forma de saber CUÁL réplica encontró la solución (acá solo hay una réplica
@@ -234,12 +246,6 @@ def main():
     global connection
     global channel
 
-    global WORKER_TASKS
-    global WORKER_SOLUTIONS
-    global WORKER_TASK_SECONDS
-    global RABBIT_CONNECTED
-    global REDIS_CONNECTED
-    global GPU_REQUEST_ERRORS
     # -------------------------
     # OBSERVABILIDAD
     # -------------------------
@@ -248,19 +254,7 @@ def main():
     obs.instrument_redis()
     tracer = obs.get_tracer("worker-gpu")
     obs.start_metrics_server()
-    WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
-    WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
-    WORKER_TASK_SECONDS = Histogram(
-        "worker_task_duration_seconds", "Duracion del minado de una sub-tarea (incluye HTTP a gpu-server)",
-        ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
-    )
-    RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-    REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
-    GPU_SERVER_URL = os.getenv("GPU_SERVICE_URL", "http://gpu-service-internal:8000/mine")
-    GPU_REQUEST_ERRORS = Counter(
-        "worker_gpu_request_errors_total",
-        "Errores al llamar al GPU Server"
-    )
+    
     r = connect_redis()
     log.info(f"Conectando a RabbitMQ (worker_id={WORKER_ID})")
     while True:

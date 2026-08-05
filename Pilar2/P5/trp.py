@@ -17,7 +17,25 @@ from prometheus_client import Counter, Gauge, Histogram
 log = obs.setup_logging("trp")
 r = None
 channel = None
-
+TRP_TASKS = Counter("trp_tasks_subdivided_total", "Tareas del NCT subdivididas")
+TRP_CHUNKS = Counter("trp_chunks_published_total", "Sub-tareas (chunks) publicadas a los workers")
+TRP_FALLBACK_ACTIVE = Gauge("trp_fallback_active", "1 si el fallback a CPU esta activo")
+TRP_GPU_ALIVE = Gauge("trp_gpu_alive", "1 si el gpu-server tiene heartbeat vivo")
+TRP_SCALE_EVENTS = Counter("trp_cpu_scale_events_total", "Eventos de escalado de worker-cpu", ["action"])
+REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+TRP_HASHES_ASSIGNED = Counter(
+    "trp_hashes_assigned_total",
+    "Hashes distribuidos por el TRP"
+)
+TRP_SUBDIVISION_SECONDS = Histogram(
+    "trp_subdivision_duration_seconds",
+    "Tiempo en subdividir una tarea"
+)
+TRP_MODE = Gauge(
+    "trp_mode",
+    "0 GPU - 1 CPU"
+)
 # -------------------------
 # CONEXIONES
 # -------------------------
@@ -379,16 +397,6 @@ def main():
     global connection
     global channel
 
-    global TRP_TASKS
-    global TRP_CHUNKS
-    global TRP_FALLBACK_ACTIVE
-    global RABBIT_CONNECTED
-    global REDIS_CONNECTED
-    global TRP_GPU_ALIVE
-    global TRP_SCALE_EVENTS
-    global TRP_HASHES_ASSIGNED
-    global TRP_SUBDIVISION_SECONDS
-    global TRP_MODE
 
     # -------------------------
     # OBSERVABILIDAD (logging JSON + métricas + trazas)
