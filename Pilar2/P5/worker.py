@@ -15,7 +15,7 @@ from prometheus_client import Counter, Histogram, Gauge
 
 # Este worker no mina localmente: delega el cálculo pesado al servidor GPU
 # vía HTTP y solo reporta el resultado.
-
+log = obs.setup_logging("worker-gpu")
 
 
 WORKER_TYPE = "gpu"
@@ -70,25 +70,7 @@ def rabbitmq_ssl_context():
     ctx.verify_mode = ssl.CERT_NONE
     return pika.SSLOptions(ctx)
 
-log.info(f"Conectando a RabbitMQ (worker_id={WORKER_ID})")
-while True:
-    try:
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(
-                os.getenv("RABBITMQ_HOST", "rabbitmq"),
-                port=5671,
-                ssl_options=rabbitmq_ssl_context(),
-                heartbeat=180,
-                blocked_connection_timeout=300,
-            )
-        )
-        channel = connection.channel()
-        RABBIT_CONNECTED.set(1)
-        break
-    except pika.exceptions.AMQPConnectionError:
-        log.warning("RabbitMQ no está listo todavía. Reintentando en 3 segundos...")
-        RABBIT_CONNECTED.set(0)
-        time.sleep(3)
+
 
 
 
@@ -247,7 +229,6 @@ def callback(ch, method, properties, body):
 
 
 def main():
-    global log
     global tracer
     global r
     global connection
@@ -262,7 +243,6 @@ def main():
     # -------------------------
     # OBSERVABILIDAD
     # -------------------------
-    log = obs.setup_logging("worker-gpu")
     obs.setup_tracing("worker-gpu")
     obs.instrument_requests()  # las llamadas HTTP al gpu-server quedan trazadas
     obs.instrument_redis()
@@ -282,6 +262,25 @@ def main():
         "Errores al llamar al GPU Server"
     )
     r = connect_redis()
+    log.info(f"Conectando a RabbitMQ (worker_id={WORKER_ID})")
+    while True:
+        try:
+            connection = pika.BlockingConnection(
+                pika.ConnectionParameters(
+                    os.getenv("RABBITMQ_HOST", "rabbitmq"),
+                    port=5671,
+                    ssl_options=rabbitmq_ssl_context(),
+                    heartbeat=180,
+                    blocked_connection_timeout=300,
+                )
+            )
+            channel = connection.channel()
+            RABBIT_CONNECTED.set(1)
+            break
+        except pika.exceptions.AMQPConnectionError:
+            log.warning("RabbitMQ no está listo todavía. Reintentando en 3 segundos...")
+            RABBIT_CONNECTED.set(0)
+            time.sleep(3)
     # Declaramos las mismas colas
     channel.queue_declare(queue='tareas')
     channel.queue_declare(queue='soluciones')

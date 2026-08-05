@@ -22,7 +22,7 @@ from observability import SERVICE_UP
 from prometheus_client import Counter, Gauge, Histogram
 
 # API REST que expone endpoints para el mundo exterior y coordina todo el proceso de creación de bloques.
-
+log = obs.setup_logging("nct")
 
 
 def connect_redis():
@@ -1010,7 +1010,6 @@ def status():
     }
 
 def main():
-    global log
     global tracer
     global r
     global connection
@@ -1029,7 +1028,6 @@ def main():
     global NCT_MINING_ACTIVE
 
     # --- Observabilidad ---------------------------------------------------------
-    log = obs.setup_logging("nct")
     obs.setup_tracing("nct")
     obs.instrument_requests()
     obs.instrument_redis()

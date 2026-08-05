@@ -15,7 +15,7 @@ from prometheus_client import Counter, Histogram, Gauge
 # Este archivo es un minero de GPU... digo, de CPU.
 # Su único trabajo es recibir un desafío matemático, resolverlo por fuerza bruta, y reportar la solución.
 # No sabe nada de bloques, transacciones ni blockchain — solo mina
-
+log = obs.setup_logging("worker-cpu")
 
 
 WORKER_TYPE = "cpu"
@@ -245,7 +245,6 @@ def callback(ch, method, properties, body):
 
 
 def main():
-    global log
     global tracer
     global r
     global connection
@@ -260,7 +259,6 @@ def main():
     # -------------------------
     # OBSERVABILIDAD
     # -------------------------
-    log = obs.setup_logging("worker-cpu")
     obs.setup_tracing("worker-cpu")
     obs.instrument_redis()
     tracer = obs.get_tracer("worker-cpu")

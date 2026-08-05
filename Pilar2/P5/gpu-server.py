@@ -16,7 +16,7 @@ from observability import SERVICE_UP
 from prometheus_client import Counter, Histogram, Gauge
 
 
-
+log = obs.setup_logging("gpu-server")
 app = FastAPI()
 
 
@@ -306,7 +306,6 @@ def mine(req: MineRequest):
     return {"stdout": result.stdout}
 
 def main():
-    global log
     global connection
     global channel
 
@@ -317,9 +316,8 @@ def main():
     global GPU_BUSY
     global GPU_HASHES_REQUESTED
     global GPU_ERRORS
-    
+
     # --- Observabilidad ---------------------------------------------------------
-    log = obs.setup_logging("gpu-server")
     obs.setup_tracing("gpu-server")
 
     GPU_MINE_REQUESTS = Counter("gpu_mine_requests_total", "Pedidos de minado recibidos por el gpu-server")
