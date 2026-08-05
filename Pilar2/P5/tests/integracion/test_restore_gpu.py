@@ -1,5 +1,6 @@
 from unittest.mock import patch
-
+import prometheus_client
+prometheus_client.REGISTRY.clear()
 import trp
 
 @patch("trp.scale_cpu_workers")

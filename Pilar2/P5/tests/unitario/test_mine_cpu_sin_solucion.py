@@ -1,3 +1,5 @@
+import prometheus_client
+prometheus_client.REGISTRY.clear()
 from worker_cpu import mine_cpu
 
 

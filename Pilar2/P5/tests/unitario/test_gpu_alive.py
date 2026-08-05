@@ -1,4 +1,6 @@
 from unittest.mock import MagicMock
+import prometheus_client
+prometheus_client.REGISTRY.clear()
 import trp
 
 def test_gpu_alive_true(monkeypatch):

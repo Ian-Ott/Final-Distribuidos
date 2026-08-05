@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
-
+import prometheus_client
+prometheus_client.REGISTRY.clear()
 import worker
 
 
