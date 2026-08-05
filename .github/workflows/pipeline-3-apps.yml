@@ -40,7 +40,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest Pilar2/P5/tests/unitarios -v
+          pytest Pilar2/P5/tests/unitario -v
       
   build-and-push:
     name: Build ${{ matrix.name }}
