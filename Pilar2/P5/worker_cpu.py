@@ -83,22 +83,7 @@ def connect_redis():
             REDIS_CONNECTED.set(0)
             time.sleep(3)
 
-r = connect_redis()
-connection = connect_rabbitmq()
 
-# Declaracion y creacion de colas
-channel = connection.channel()
-channel.queue_declare(queue='tareas') 
-channel.queue_declare(queue='soluciones')
-SERVICE_UP.labels(service="worker-cpu").set(1)
-log.info(
-    "Worker iniciado",
-    extra={
-        "ctx_event": "worker_started",
-        "ctx_worker_id": WORKER_ID,
-        "ctx_worker_type": WORKER_TYPE,
-    },
-)
 
 def log_event(event: str, **fields):
     """Mismo patrón de log centralizado que usan NCT y TrP: escribe en la
@@ -126,7 +111,7 @@ def heartbeat_loop():
             )
         time.sleep(10)
 
-threading.Thread(target=heartbeat_loop, daemon=True).start()
+
 
 # Algoritmo de minado (Proof of Work)
 # data es el contenido del bloque (transacciones, hash anterior, etc.) serializado como string
@@ -276,6 +261,29 @@ def callback(ch, method, properties, body):
             )
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
-channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=False)
-log.info(f"[{WORKER_ID}] Worker CPU esperando tareas...")
-channel.start_consuming()
+
+
+def main():
+    r = connect_redis()
+    connection = connect_rabbitmq()
+
+    # Declaracion y creacion de colas
+    channel = connection.channel()
+    channel.queue_declare(queue='tareas') 
+    channel.queue_declare(queue='soluciones')
+    SERVICE_UP.labels(service="worker-cpu").set(1)
+    log.info(
+        "Worker iniciado",
+        extra={
+            "ctx_event": "worker_started",
+            "ctx_worker_id": WORKER_ID,
+            "ctx_worker_type": WORKER_TYPE,
+        },
+    )
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
+    channel.basic_consume(queue="tareas", on_message_callback=callback, auto_ack=False)
+    log.info(f"[{WORKER_ID}] Worker CPU esperando tareas...")
+    channel.start_consuming()
+
+if __name__ == "__main__":
+    main()

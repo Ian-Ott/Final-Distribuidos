@@ -82,7 +82,7 @@ def log_event(r, event: str, **fields):
     log.info(f"event={event} " + " ".join(f"{k}={v}" for k, v in fields.items()))
 
 
-r = connect_redis()
+
 
 def rabbitmq_ssl_context():
     ctx = ssl.create_default_context()
@@ -110,18 +110,7 @@ while True:
         RABBIT_CONNECTED.set(0)
         time.sleep(3)
 
-# Declaramos las mismas colas
-channel.queue_declare(queue='tareas')
-channel.queue_declare(queue='soluciones')
-SERVICE_UP.labels(service="worker-gpu").set(1)
-log.info(
-    "Worker GPU iniciado",
-    extra={
-        "ctx_event": "worker_started",
-        "ctx_worker_id": WORKER_ID,
-        "ctx_gpu_server": GPU_SERVER_URL,
-    },
-)
+
 
 def callback(ch, method, properties, body):
     try:
@@ -275,11 +264,30 @@ def callback(ch, method, properties, body):
             )
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
-# Escuchamos de la cola 'tareas'
-channel.basic_consume(
-    queue="tareas",
-    on_message_callback=callback,
-    auto_ack=False
-)
-log.info(f"[{WORKER_ID}] Worker GPU esperando tareas...")
-channel.start_consuming()
+
+
+def main():
+    r = connect_redis()
+    # Declaramos las mismas colas
+    channel.queue_declare(queue='tareas')
+    channel.queue_declare(queue='soluciones')
+    SERVICE_UP.labels(service="worker-gpu").set(1)
+    log.info(
+        "Worker GPU iniciado",
+        extra={
+            "ctx_event": "worker_started",
+            "ctx_worker_id": WORKER_ID,
+            "ctx_gpu_server": GPU_SERVER_URL,
+        },
+    )
+    # Escuchamos de la cola 'tareas'
+    channel.basic_consume(
+        queue="tareas",
+        on_message_callback=callback,
+        auto_ack=False
+    )
+    log.info(f"[{WORKER_ID}] Worker GPU esperando tareas...")
+    channel.start_consuming()
+
+if __name__ == "__main__":
+    main()

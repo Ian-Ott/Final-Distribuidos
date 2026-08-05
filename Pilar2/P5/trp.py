@@ -87,20 +87,7 @@ def connect_rabbitmq():
             RABBIT_CONNECTED.set(0)
             time.sleep(3)
 
-r = connect_redis()
-connection = connect_rabbitmq()
-channel = connection.channel()
-channel.queue_declare(queue='tareas_pool')   # NCT → TrP
-channel.queue_declare(queue='tareas')        # TrP → Workers
-channel.queue_declare(queue='soluciones')
-channel.queue_declare(queue='heartbeat_gpu') # gpu-server → TrP
-SERVICE_UP.labels(service="trp").set(1)
-log.info(
-    "TrP iniciado",
-    extra={
-        "ctx_event": "trp_started",
-    },
-)
+
 # -------------------------
 # MONITOREO DE GPU
 # -------------------------
@@ -181,7 +168,7 @@ def heartbeat_consumer():
             log.error(f"heartbeat_consumer crashed: {e}. Reintento en 3s.")
             time.sleep(3)
 
-threading.Thread(target=heartbeat_consumer, daemon=True).start()
+
 
 def is_gpu_server_alive() -> bool:
     return r.exists("heartbeat:gpu-server") == 1
@@ -305,7 +292,7 @@ def monitor_loop():
         
         time.sleep(15)
 
-threading.Thread(target=monitor_loop, daemon=True).start()
+
 
 # -------------------------
 # SUBDIVISION DE TAREAS
@@ -410,6 +397,28 @@ def on_task(ch, method, properties, body):
     )
     subdivide_and_publish(tarea)
 
-channel.basic_consume(queue='tareas_pool', on_message_callback=on_task, auto_ack=True)
-log.info("Esperando tareas del NCT...")
-channel.start_consuming()
+
+
+def main():
+    r = connect_redis()
+    connection = connect_rabbitmq()
+    channel = connection.channel()
+    channel.queue_declare(queue='tareas_pool')   # NCT → TrP
+    channel.queue_declare(queue='tareas')        # TrP → Workers
+    channel.queue_declare(queue='soluciones')
+    channel.queue_declare(queue='heartbeat_gpu') # gpu-server → TrP
+    SERVICE_UP.labels(service="trp").set(1)
+    log.info(
+        "TrP iniciado",
+        extra={
+            "ctx_event": "trp_started",
+        },
+    )
+    threading.Thread(target=heartbeat_consumer, daemon=True).start()
+    threading.Thread(target=monitor_loop, daemon=True).start()
+    channel.basic_consume(queue='tareas_pool', on_message_callback=on_task, auto_ack=True)
+    log.info("Esperando tareas del NCT...")
+    channel.start_consuming()
+
+if __name__ == "__main__":
+    main()

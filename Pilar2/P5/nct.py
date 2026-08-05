@@ -61,14 +61,10 @@ def connect_redis():
             REDIS_CONNECTED.set(0)
             time.sleep(3)
 
-r = connect_redis()
+
 
 app = FastAPI()
-# /metrics para que Prometheus scrapee al NCT en su mismo puerto (8000).
-_metrics_app = obs.metrics_asgi_app()
-if _metrics_app is not None:
-    app.mount("/metrics", _metrics_app)
-obs.instrument_fastapi(app)
+
 RABBIT_HEARTBEAT_SECONDS = int(os.getenv("RABBIT_HEARTBEAT_SECONDS", "180"))
 RABBIT_KEEPALIVE_INTERVAL_SECONDS = int(os.getenv("RABBIT_KEEPALIVE_INTERVAL_SECONDS", "15"))
 
@@ -98,12 +94,7 @@ def connect_rabbitmq():
             RABBIT_CONNECTED.set(0)
             time.sleep(3)
 
-connection = connect_rabbitmq()
-channel = connection.channel()
-channel.queue_declare(queue='tareas_pool')  # NCT → TrP
-channel.queue_declare(queue='soluciones')   # Workers → NCT
-rabbit_lock = threading.RLock()
-SERVICE_UP.labels(service="nct").set(1)
+
 
 def ensure_connection():
     """Verifica que la conexión y el canal sigan vivos; si no, reconecta."""
@@ -322,8 +313,7 @@ MINING_POLL_INTERVAL_SECONDS = 0.5
 MINING_LOCK_KEY = "minando"
 MINING_LOCK_TTL_SECONDS = int(os.getenv("MINING_LOCK_TTL_SECONDS", str(MINING_TIMEOUT_SECONDS + 120)))
 
-if not r.exists("difficulty"):
-    r.set("difficulty", "00")
+
 
 def acquire_mining_lock() -> str | None:
     token = str(uuid.uuid4())
@@ -343,23 +333,7 @@ def release_mining_lock(token: str):
         token,
     )
 
-# -------------------------
-# GENESIS
-# El bloque génesis es el primero de toda blockchain — no tiene transacciones ni fue minado.
-# Su previous_hash es "0" porque no hay bloque anterior, y su block_hash es literalmente "GENESIS".
-# Solo se crea si la blockchain está vacía.
-#Se usa un lock distribuido para que si hay mas de una replica del nct no cargue mas de un genesis.
-if r.set("genesis_lock", "1", nx=True):
-    if r.llen("blockchain") == 0:
-        genesis = {
-            "index": 0,
-            "timestamp": time.time(),
-            "transactions": [],
-            "previous_hash": "0",
-            "nonce": 0,
-            "block_hash": "GENESIS"
-        }
-        r.rpush("blockchain", json.dumps(genesis))
+
 
 # -------------------------
 # MODELOS
@@ -1012,8 +986,7 @@ def logs_janitor_loop():
             log.error(f"[logs-janitor] error: {e}")
         time.sleep(LOGS_TRIM_INTERVAL_SECONDS)
 
-_logs_janitor_thread = threading.Thread(target=logs_janitor_loop, daemon=True, name="logs-janitor")
-_logs_janitor_thread.start()
+
 
 # Thread que refleja en Prometheus el estado que vive en Redis. Estos son
 # gauges (valores instantáneos), no eventos, así que en vez de instrumentar
@@ -1032,12 +1005,7 @@ def metrics_updater_loop():
             log.warning(f"[metrics-updater] error: {e}")
         time.sleep(METRICS_REFRESH_SECONDS)
 
-_metrics_updater_thread = threading.Thread(target=metrics_updater_loop, daemon=True, name="metrics-updater")
-_metrics_updater_thread.start()
 
-# Lanzar el auto-miner solo en el proceso principal (uvicorn).
-_miner_thread = threading.Thread(target=auto_miner_loop, daemon=True, name="auto-miner")
-_miner_thread.start()
 
 # Devuelve el historial de eventos que todos los servicios van escribiendo.
 @app.get("/logs")
@@ -1063,3 +1031,47 @@ def status():
         "pending_tx":    r.llen("pending_transactions"),
         "minando":       bool(r.exists("minando")),
     }
+
+def main():
+    r = connect_redis()
+    # /metrics para que Prometheus scrapee al NCT en su mismo puerto (8000).
+    _metrics_app = obs.metrics_asgi_app()
+    if _metrics_app is not None:
+        app.mount("/metrics", _metrics_app)
+    obs.instrument_fastapi(app)
+    connection = connect_rabbitmq()
+    channel = connection.channel()
+    channel.queue_declare(queue='tareas_pool')  # NCT → TrP
+    channel.queue_declare(queue='soluciones')   # Workers → NCT
+    rabbit_lock = threading.RLock()
+    SERVICE_UP.labels(service="nct").set(1)
+    if not r.exists("difficulty"):
+        r.set("difficulty", "00")
+    # -------------------------
+    # GENESIS
+    # El bloque génesis es el primero de toda blockchain — no tiene transacciones ni fue minado.
+    # Su previous_hash es "0" porque no hay bloque anterior, y su block_hash es literalmente "GENESIS".
+    # Solo se crea si la blockchain está vacía.
+    #Se usa un lock distribuido para que si hay mas de una replica del nct no cargue mas de un genesis.
+    if r.set("genesis_lock", "1", nx=True):
+        if r.llen("blockchain") == 0:
+            genesis = {
+                "index": 0,
+                "timestamp": time.time(),
+                "transactions": [],
+                "previous_hash": "0",
+                "nonce": 0,
+                "block_hash": "GENESIS"
+            }
+            r.rpush("blockchain", json.dumps(genesis))
+    _logs_janitor_thread = threading.Thread(target=logs_janitor_loop, daemon=True, name="logs-janitor")
+    _logs_janitor_thread.start()
+    _metrics_updater_thread = threading.Thread(target=metrics_updater_loop, daemon=True, name="metrics-updater")
+    _metrics_updater_thread.start()
+
+    # Lanzar el auto-miner solo en el proceso principal (uvicorn).
+    _miner_thread = threading.Thread(target=auto_miner_loop, daemon=True, name="auto-miner")
+    _miner_thread.start()
+
+if __name__ == "__main__":
+    main()

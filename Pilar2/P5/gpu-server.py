@@ -40,18 +40,7 @@ GPU_ERRORS = Counter(
 )
 
 app = FastAPI()
-_metrics_app = obs.metrics_asgi_app()
-if _metrics_app is not None:
-    app.mount("/metrics", _metrics_app)
-obs.instrument_fastapi(app)
 
-# CUDA Runtime
-path = find_library("cudart")
-
-if path is None:
-    path = "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12"
-
-libcudart = ctypes.CDLL(path)
 
 
 class CudaDeviceProp(ctypes.Structure):
@@ -229,8 +218,7 @@ def heartbeat_loop():
 
             time.sleep(3)
 
-threading.Thread(target=heartbeat_loop, daemon=True).start()
-SERVICE_UP.labels(service="gpu-server").set(1)
+
 
 class MineRequest(BaseModel):
     difficulty: str
@@ -338,3 +326,22 @@ def mine(req: MineRequest):
         log.warning("El binario CUDA no produjo salida")
 
     return {"stdout": result.stdout}
+
+def main():
+    _metrics_app = obs.metrics_asgi_app()
+    if _metrics_app is not None:
+        app.mount("/metrics", _metrics_app)
+    obs.instrument_fastapi(app)
+
+    # CUDA Runtime
+    path = find_library("cudart")
+
+    if path is None:
+        path = "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12"
+
+    libcudart = ctypes.CDLL(path)
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
+    SERVICE_UP.labels(service="gpu-server").set(1)
+
+if __name__ == "__main__":
+    main()
