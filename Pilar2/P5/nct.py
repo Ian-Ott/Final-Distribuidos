@@ -21,8 +21,8 @@ from cryptography.exceptions import InvalidSignature
 # a la lista "logs" de Redis, así toda señal de negocio queda también en Prometheus.
 import observability as obs
 from observability import SERVICE_UP
-from metrics import NCT_BLOCKS, NCT_MINING_SECONDS, NCT_TX_RECEIVED, NCT_SOLUTIONS_REJECTED,NCT_MINING_TIMEOUTS,NCT_PENDING_TX,
-NCT_BLOCKCHAIN_LEN,NCT_DIFFICULTY_ZEROS,NCT_MINING_ACTIVE,RABBIT_CONNECTED,REDIS_CONNECTED
+from metrics import (NCT_BLOCKS, NCT_MINING_SECONDS, NCT_TX_RECEIVED, NCT_SOLUTIONS_REJECTED,NCT_MINING_TIMEOUTS,
+NCT_PENDING_TX,NCT_BLOCKCHAIN_LEN,NCT_DIFFICULTY_ZEROS,NCT_MINING_ACTIVE,RABBIT_CONNECTED,REDIS_CONNECTED)
 
 # API REST que expone endpoints para el mundo exterior y coordina todo el proceso de creación de bloques.
 log = obs.setup_logging("nct")

@@ -11,8 +11,8 @@ import urllib.request
 import observability as obs
 from observability import SERVICE_UP
 from prometheus_client import Counter, Gauge, Histogram
-from metrics import TRP_TASKS,TRP_CHUNKS,TRP_FALLBACK_ACTIVE,TRP_GPU_ALIVE,TRP_SCALE_EVENTS,RABBIT_CONNECTED,REDIS_CONNECTED,
-TRP_HASHES_ASSIGNED,TRP_SUBDIVISION_SECONDS,TRP_MODE
+from metrics import (TRP_TASKS,TRP_CHUNKS,TRP_FALLBACK_ACTIVE,TRP_GPU_ALIVE,TRP_SCALE_EVENTS,
+RABBIT_CONNECTED,REDIS_CONNECTED,TRP_HASHES_ASSIGNED,TRP_SUBDIVISION_SECONDS,TRP_MODE)
 # TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers.
 # El NCT dice "minà este bloque", y el TrP se encarga de dividir ese trabajo, distribuirlo, y decidir si hay que cambiar de modo GPU a CPU.
 log = obs.setup_logging("trp")

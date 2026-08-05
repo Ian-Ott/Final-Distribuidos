@@ -101,7 +101,7 @@ jobs:
       - name: Wait for GPU deployment
         run: |
           kubectl rollout status deployment/blockchain-gpu-server
-          kubectl rollout status deployment/blockchain-worker-gpu
+          kubectl rollout status deployment/blockchain-worker
 
       - name: Run GPU integration tests
         run: |
