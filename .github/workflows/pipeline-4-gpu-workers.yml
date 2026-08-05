@@ -91,17 +91,17 @@ jobs:
 
           kubectl apply -f .
       - uses: actions/setup-python@v5
-          with:
-            python-version: "3.11"
+        with:
+          python-version: "3.11"
 
       - name: Install test dependencies
         run: |
-          python -m pip install pytest requests pika redis
+          pip install -r Pilar2/P5/requirements.txt
 
       - name: Wait for GPU deployment
         run: |
-          kubectl rollout status deployment/gpu-server
-          kubectl rollout status deployment/worker-gpu
+          kubectl rollout status deployment/blockchain-gpu-server
+          kubectl rollout status deployment/blockchain-worker-gpu
 
       - name: Run GPU integration tests
         run: |

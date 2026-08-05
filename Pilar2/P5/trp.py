@@ -15,34 +15,7 @@ from prometheus_client import Counter, Gauge, Histogram
 # TRP (Pool de Transacciones) es un intermediario inteligente entre el NCT y los workers.
 # El NCT dice "minà este bloque", y el TrP se encarga de dividir ese trabajo, distribuirlo, y decidir si hay que cambiar de modo GPU a CPU.
 
-# -------------------------
-# OBSERVABILIDAD (logging JSON + métricas + trazas)
-# -------------------------
-log = obs.setup_logging("trp")
-obs.setup_tracing("trp")
-obs.instrument_redis()
-tracer = obs.get_tracer("trp")
-obs.start_metrics_server()  # /metrics en METRICS_PORT (default 9000)
 
-TRP_TASKS = Counter("trp_tasks_subdivided_total", "Tareas del NCT subdivididas")
-TRP_CHUNKS = Counter("trp_chunks_published_total", "Sub-tareas (chunks) publicadas a los workers")
-TRP_FALLBACK_ACTIVE = Gauge("trp_fallback_active", "1 si el fallback a CPU esta activo")
-TRP_GPU_ALIVE = Gauge("trp_gpu_alive", "1 si el gpu-server tiene heartbeat vivo")
-TRP_SCALE_EVENTS = Counter("trp_cpu_scale_events_total", "Eventos de escalado de worker-cpu", ["action"])
-REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
-RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-TRP_HASHES_ASSIGNED = Counter(
-    "trp_hashes_assigned_total",
-    "Hashes distribuidos por el TRP"
-)
-TRP_SUBDIVISION_SECONDS = Histogram(
-    "trp_subdivision_duration_seconds",
-    "Tiempo en subdividir una tarea"
-)
-TRP_MODE = Gauge(
-    "trp_mode",
-    "0 GPU - 1 CPU"
-)
 
 # -------------------------
 # CONEXIONES
@@ -400,6 +373,52 @@ def on_task(ch, method, properties, body):
 
 
 def main():
+    global log
+    global tracer
+    global r
+    global connection
+    global channel
+
+    global TRP_TASKS
+    global TRP_CHUNKS
+    global TRP_FALLBACK_ACTIVE
+    global RABBIT_CONNECTED
+    global REDIS_CONNECTED
+    global TRP_GPU_ALIVE
+    global TRP_SCALE_EVENTS
+    global TRP_HASHES_ASSIGNED
+    global TRP_SUBDIVISION_SECONDS
+    global TRP_MODE
+
+    # -------------------------
+    # OBSERVABILIDAD (logging JSON + métricas + trazas)
+    # -------------------------
+    log = obs.setup_logging("trp")
+    obs.setup_tracing("trp")
+    obs.instrument_redis()
+    tracer = obs.get_tracer("trp")
+    obs.start_metrics_server()  # /metrics en METRICS_PORT (default 9000)
+
+    TRP_TASKS = Counter("trp_tasks_subdivided_total", "Tareas del NCT subdivididas")
+    TRP_CHUNKS = Counter("trp_chunks_published_total", "Sub-tareas (chunks) publicadas a los workers")
+    TRP_FALLBACK_ACTIVE = Gauge("trp_fallback_active", "1 si el fallback a CPU esta activo")
+    TRP_GPU_ALIVE = Gauge("trp_gpu_alive", "1 si el gpu-server tiene heartbeat vivo")
+    TRP_SCALE_EVENTS = Counter("trp_cpu_scale_events_total", "Eventos de escalado de worker-cpu", ["action"])
+    REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+    RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+    TRP_HASHES_ASSIGNED = Counter(
+        "trp_hashes_assigned_total",
+        "Hashes distribuidos por el TRP"
+    )
+    TRP_SUBDIVISION_SECONDS = Histogram(
+        "trp_subdivision_duration_seconds",
+        "Tiempo en subdividir una tarea"
+    )
+    TRP_MODE = Gauge(
+        "trp_mode",
+        "0 GPU - 1 CPU"
+    )
+
     r = connect_redis()
     connection = connect_rabbitmq()
     channel = connection.channel()

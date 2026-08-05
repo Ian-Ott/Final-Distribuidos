@@ -15,29 +15,7 @@ import observability as obs
 from observability import SERVICE_UP
 from prometheus_client import Counter, Histogram, Gauge
 
-# --- Observabilidad ---------------------------------------------------------
-log = obs.setup_logging("gpu-server")
-obs.setup_tracing("gpu-server")
 
-GPU_MINE_REQUESTS = Counter("gpu_mine_requests_total", "Pedidos de minado recibidos por el gpu-server")
-GPU_SOLUTIONS = Counter("gpu_solutions_found_total", "Pedidos en los que el binario CUDA encontro nonce")
-GPU_MINE_SECONDS = Histogram(
-    "gpu_mine_duration_seconds", "Duracion de la corrida del binario CUDA",
-    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
-)
-RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-GPU_BUSY = Gauge(
-    "gpu_busy",
-    "1 mientras la GPU está minando"
-)
-GPU_HASHES_REQUESTED = Counter(
-    "gpu_hashes_requested_total",
-    "Hashes enviados al binario CUDA"
-)
-GPU_ERRORS = Counter(
-    "gpu_errors_total",
-    "Errores del binario CUDA"
-)
 
 app = FastAPI()
 
@@ -328,6 +306,41 @@ def mine(req: MineRequest):
     return {"stdout": result.stdout}
 
 def main():
+    global log
+    global connection
+    global channel
+
+    global GPU_MINE_REQUESTS
+    global GPU_SOLUTIONS
+    global GPU_MINE_SECONDS
+    global RABBIT_CONNECTED
+    global GPU_BUSY
+    global GPU_HASHES_REQUESTED
+    global GPU_ERRORS
+    
+    # --- Observabilidad ---------------------------------------------------------
+    log = obs.setup_logging("gpu-server")
+    obs.setup_tracing("gpu-server")
+
+    GPU_MINE_REQUESTS = Counter("gpu_mine_requests_total", "Pedidos de minado recibidos por el gpu-server")
+    GPU_SOLUTIONS = Counter("gpu_solutions_found_total", "Pedidos en los que el binario CUDA encontro nonce")
+    GPU_MINE_SECONDS = Histogram(
+        "gpu_mine_duration_seconds", "Duracion de la corrida del binario CUDA",
+        buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+    )
+    RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+    GPU_BUSY = Gauge(
+        "gpu_busy",
+        "1 mientras la GPU está minando"
+    )
+    GPU_HASHES_REQUESTED = Counter(
+        "gpu_hashes_requested_total",
+        "Hashes enviados al binario CUDA"
+    )
+    GPU_ERRORS = Counter(
+        "gpu_errors_total",
+        "Errores del binario CUDA"
+    )
     _metrics_app = obs.metrics_asgi_app()
     if _metrics_app is not None:
         app.mount("/metrics", _metrics_app)

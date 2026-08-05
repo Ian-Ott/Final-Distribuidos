@@ -16,31 +16,12 @@ from prometheus_client import Counter, Histogram, Gauge
 # Su único trabajo es recibir un desafío matemático, resolverlo por fuerza bruta, y reportar la solución.
 # No sabe nada de bloques, transacciones ni blockchain — solo mina
 
-# -------------------------
-# OBSERVABILIDAD
-# -------------------------
-log = obs.setup_logging("worker-cpu")
-obs.setup_tracing("worker-cpu")
-obs.instrument_redis()
-tracer = obs.get_tracer("worker-cpu")
-obs.start_metrics_server()
+
 
 WORKER_TYPE = "cpu"
-WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
-WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
-WORKER_TASK_SECONDS = Histogram(
-    "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
-    ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
-)
-REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
-RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
-HASHES_TOTAL = Counter(
-    "worker_hashes_total",
-    "Hashes calculados",
-    ["worker_type"]
-)
+
 
 # Retry loop para conectarse a rabbitmq
 def rabbitmq_ssl_context():
@@ -264,6 +245,39 @@ def callback(ch, method, properties, body):
 
 
 def main():
+    global log
+    global tracer
+    global r
+    global connection
+    global channel
+
+    global WORKER_TASKS
+    global WORKER_SOLUTIONS
+    global WORKER_TASK_SECONDS
+    global RABBIT_CONNECTED
+    global REDIS_CONNECTED
+    global HASHES_TOTAL
+    # -------------------------
+    # OBSERVABILIDAD
+    # -------------------------
+    log = obs.setup_logging("worker-cpu")
+    obs.setup_tracing("worker-cpu")
+    obs.instrument_redis()
+    tracer = obs.get_tracer("worker-cpu")
+    obs.start_metrics_server()
+    WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
+    WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
+    WORKER_TASK_SECONDS = Histogram(
+        "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
+        ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
+    )
+    REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
+    RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
+    HASHES_TOTAL = Counter(
+        "worker_hashes_total",
+        "Hashes calculados",
+        ["worker_type"]
+    )
     r = connect_redis()
     connection = connect_rabbitmq()
 

@@ -3,6 +3,8 @@ uvicorn
 pika
 redis
 requests
+pytest
+pydantic
 cryptography
 # --- Observabilidad ---
 # Métricas (Prometheus): expone /metrics en cada servicio.
