@@ -17,7 +17,6 @@ spec:
         app: postgres
     spec:
       securityContext:
-        runAsNonRoot: true
         fsGroup: 999
       nodeSelector:
         pool: apps-base
