@@ -1,7 +1,5 @@
 from unittest.mock import patch, mock_open
 import json
-import prometheus_client
-prometheus_client.REGISTRY.clear()
 import trp
 
 @patch("urllib.request.urlopen")
