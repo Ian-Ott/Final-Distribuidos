@@ -17,32 +17,18 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.exceptions import InvalidSignature
 
+# Métricas de dominio. Se incrementan en los mismos puntos donde ya se escribe
+# a la lista "logs" de Redis, así toda señal de negocio queda también en Prometheus.
 import observability as obs
 from observability import SERVICE_UP
-from prometheus_client import Counter, Gauge, Histogram
+from metrics import NCT_BLOCKS, NCT_MINING_SECONDS, NCT_TX_RECEIVED, NCT_SOLUTIONS_REJECTED,NCT_MINING_TIMEOUTS,NCT_PENDING_TX,
+NCT_BLOCKCHAIN_LEN,NCT_DIFFICULTY_ZEROS,NCT_MINING_ACTIVE,RABBIT_CONNECTED,REDIS_CONNECTED
 
 # API REST que expone endpoints para el mundo exterior y coordina todo el proceso de creación de bloques.
 log = obs.setup_logging("nct")
 r = None
 channel = None
 
-# Métricas de dominio. Se incrementan en los mismos puntos donde ya se escribe
-# a la lista "logs" de Redis, así toda señal de negocio queda también en Prometheus.
-NCT_BLOCKS = Counter("nct_blocks_total", "Bloques minados y confirmados")
-NCT_MINING_SECONDS = Histogram(
-    "nct_block_mining_seconds",
-    "Tiempo desde que se publica la tarea hasta que llega una solucion valida",
-    buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120, 180),
-)
-NCT_TX_RECEIVED = Counter("nct_transactions_received_total", "Transacciones recibidas", ["tx_type"])
-NCT_SOLUTIONS_REJECTED = Counter("nct_solutions_rejected_total", "Soluciones descartadas por el NCT", ["reason"])
-NCT_MINING_TIMEOUTS = Counter("nct_mining_timeouts_total", "Veces que el minado supero el timeout")
-NCT_PENDING_TX = Gauge("nct_pending_transactions", "Transacciones pendientes de minar")
-NCT_BLOCKCHAIN_LEN = Gauge("nct_blockchain_length", "Cantidad de bloques en la cadena")
-NCT_DIFFICULTY_ZEROS = Gauge("nct_difficulty_zeros", "Ceros de dificultad exigidos actualmente")
-NCT_MINING_ACTIVE = Gauge("nct_mining_active", "1 si una replica tiene el lock de minado tomado")
-RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
 
 def connect_redis():
     while True:

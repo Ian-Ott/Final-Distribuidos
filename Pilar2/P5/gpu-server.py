@@ -13,29 +13,10 @@ from ctypes.util import find_library
 
 import observability as obs
 from observability import SERVICE_UP
-from prometheus_client import Counter, Histogram, Gauge
+from metrics import GPU_MINE_REQUESTS, GPU_SOLUTIONS, GPU_MINE_SECONDS,RABBIT_CONNECTED,GPU_BUSY,GPU_HASHES_REQUESTED,GPU_ERRORS
 
 
 log = obs.setup_logging("gpu-server")
-GPU_MINE_REQUESTS = Counter("gpu_mine_requests_total", "Pedidos de minado recibidos por el gpu-server")
-GPU_SOLUTIONS = Counter("gpu_solutions_found_total", "Pedidos en los que el binario CUDA encontro nonce")
-GPU_MINE_SECONDS = Histogram(
-    "gpu_mine_duration_seconds", "Duracion de la corrida del binario CUDA",
-    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
-)
-RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-GPU_BUSY = Gauge(
-    "gpu_busy",
-    "1 mientras la GPU está minando"
-)
-GPU_HASHES_REQUESTED = Counter(
-    "gpu_hashes_requested_total",
-    "Hashes enviados al binario CUDA"
-)
-GPU_ERRORS = Counter(
-    "gpu_errors_total",
-    "Errores del binario CUDA"
-)
 app = FastAPI()
 
 

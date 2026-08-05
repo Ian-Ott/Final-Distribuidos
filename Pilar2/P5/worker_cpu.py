@@ -11,25 +11,12 @@ import logging
 import observability as obs
 from observability import SERVICE_UP
 from prometheus_client import Counter, Histogram, Gauge
-
+from metrics import WORKER_TASKS,WORKER_SOLUTIONS,WORKER_TASK_SECONDS,RABBIT_CONNECTED,REDIS_CONNECTED,HASHES_TOTAL
 # Este archivo es un minero de GPU... digo, de CPU.
 # Su único trabajo es recibir un desafío matemático, resolverlo por fuerza bruta, y reportar la solución.
 # No sabe nada de bloques, transacciones ni blockchain — solo mina
 log = obs.setup_logging("worker-cpu")
 
-WORKER_TASKS = Counter("worker_tasks_processed_total", "Tareas procesadas", ["worker_type"])
-WORKER_SOLUTIONS = Counter("worker_solutions_found_total", "Soluciones encontradas", ["worker_type"])
-WORKER_TASK_SECONDS = Histogram(
-    "worker_task_duration_seconds", "Duracion del minado de una sub-tarea",
-    ["worker_type"], buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30),
-)
-REDIS_CONNECTED = Gauge("redis_connected", "Conexión con Redis")
-RABBIT_CONNECTED = Gauge("rabbit_connected", "Conexión con RabbitMQ")
-HASHES_TOTAL = Counter(
-    "worker_hashes_total",
-    "Hashes calculados",
-    ["worker_type"]
-)
 WORKER_TYPE = "cpu"
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
