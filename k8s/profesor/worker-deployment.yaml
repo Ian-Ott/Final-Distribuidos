@@ -21,6 +21,15 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+      affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values:
+                  - knode01
       containers:
         - name: worker
           securityContext:
