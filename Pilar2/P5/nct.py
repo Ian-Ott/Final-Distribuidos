@@ -28,7 +28,7 @@ NCT_PENDING_TX,NCT_BLOCKCHAIN_LEN,NCT_DIFFICULTY_ZEROS,NCT_MINING_ACTIVE,RABBIT_
 log = obs.setup_logging("nct")
 r = None
 channel = None
-
+app = FastAPI()
 
 def connect_redis():
     while True:
@@ -1030,7 +1030,6 @@ def main():
 
 
     r = connect_redis()
-    app = FastAPI()
     # /metrics para que Prometheus scrapee al NCT en su mismo puerto (8000).
     _metrics_app = obs.metrics_asgi_app()
     if _metrics_app is not None:
