@@ -1,7 +1,5 @@
 import json
 import responses
-import prometheus_client
-prometheus_client.REGISTRY.clear()
 import worker
 
 @responses.activate
