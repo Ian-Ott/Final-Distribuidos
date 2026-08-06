@@ -12,6 +12,11 @@ def test_publish_chunks(monkeypatch):
 
     monkeypatch.setattr(trp, "channel", fake_channel)
 
+    fake_redis = MagicMock()
+    fake_redis.get.return_value = "00"
+
+    monkeypatch.setattr(trp, "r", fake_redis)
+
     tarea = {
 
         "task_id": "1",
