@@ -4,6 +4,8 @@ pika
 redis
 requests
 pytest
+pytest-mock
+responses
 pydantic
 cryptography
 # --- Observabilidad ---
