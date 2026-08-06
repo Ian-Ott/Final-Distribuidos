@@ -6,7 +6,7 @@ requests
 pytest
 pytest-mock
 responses
-test-containers
+testcontainers
 pydantic
 cryptography
 # --- Observabilidad ---

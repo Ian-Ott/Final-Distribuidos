@@ -32,7 +32,7 @@ app = FastAPI()
 
 @app.on_event("startup")
 def startup():
-    main() 
+    main()  
 
 def connect_redis():
     while True:
