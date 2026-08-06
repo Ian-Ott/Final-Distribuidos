@@ -30,6 +30,10 @@ r = None
 channel = None
 app = FastAPI()
 
+@app.on_event("startup")
+def startup():
+    main()
+
 def connect_redis():
     while True:
         try:
