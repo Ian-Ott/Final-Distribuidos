@@ -45,7 +45,7 @@ def connect_redis():
 
 
 
-app = FastAPI()
+
 
 RABBIT_HEARTBEAT_SECONDS = int(os.getenv("RABBIT_HEARTBEAT_SECONDS", "180"))
 RABBIT_KEEPALIVE_INTERVAL_SECONDS = int(os.getenv("RABBIT_KEEPALIVE_INTERVAL_SECONDS", "15"))
@@ -1019,6 +1019,7 @@ def main():
     global r
     global connection
     global channel
+    global app
 
 
     # --- Observabilidad ---------------------------------------------------------
@@ -1027,9 +1028,9 @@ def main():
     obs.instrument_redis()
     tracer = obs.get_tracer("nct")
 
-    
 
     r = connect_redis()
+    app = FastAPI()
     # /metrics para que Prometheus scrapee al NCT en su mismo puerto (8000).
     _metrics_app = obs.metrics_asgi_app()
     if _metrics_app is not None:

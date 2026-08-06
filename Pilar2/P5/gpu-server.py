@@ -248,7 +248,7 @@ def select_binary(gpu):
     )
     return "./minero_sm61"
 
-
+ 
 @app.post("/mine")
 def mine(req: MineRequest):
     GPU_HASHES_REQUESTED.inc(req.end - req.start + 1)
