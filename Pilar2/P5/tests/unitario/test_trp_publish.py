@@ -17,6 +17,13 @@ def test_publish_chunks(monkeypatch):
 
     monkeypatch.setattr(trp, "r", fake_redis)
 
+    fake_tracer = MagicMock()
+    fake_span = MagicMock()
+
+    fake_tracer.start_as_current_span.return_value = fake_span
+
+    monkeypatch.setattr(trp, "tracer", fake_tracer)
+
     tarea = {
 
         "task_id": "1",
