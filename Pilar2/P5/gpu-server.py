@@ -72,17 +72,7 @@ class CudaDeviceProp(ctypes.Structure):
         ("multiGpuBoardGroupID", ctypes.c_int),
     ]
 
-libcudart.cudaGetDevice.argtypes = [
-    ctypes.POINTER(c_int)
-]
-libcudart.cudaGetDevice.restype = c_int
 
-
-libcudart.cudaGetDeviceProperties.argtypes = [
-    ctypes.POINTER(CudaDeviceProp),
-    c_int
-]
-libcudart.cudaGetDeviceProperties.restype = c_int
 
 
 # -------------------------
@@ -308,6 +298,19 @@ def mine(req: MineRequest):
 def main():
     global connection
     global channel
+    global libcudart
+
+    libcudart.cudaGetDevice.argtypes = [
+        ctypes.POINTER(c_int)
+    ]
+    libcudart.cudaGetDevice.restype = c_int
+
+
+    libcudart.cudaGetDeviceProperties.argtypes = [
+        ctypes.POINTER(CudaDeviceProp),
+        c_int
+    ]
+    libcudart.cudaGetDeviceProperties.restype = c_int
 
 
     # --- Observabilidad ---------------------------------------------------------

@@ -3,5 +3,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY observability.py .
+COPY metrics.py
 COPY trp.py .
 CMD ["python3", "trp.py"]
