@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-mock requests redis pika prometheus_client opentelemetry-api opentelemetry-sdk
+          python -m pip install -r Pilar2/P5/requirements.txt
 
       - name: Run unit tests
         run: |
