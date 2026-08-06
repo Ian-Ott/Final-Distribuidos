@@ -18,6 +18,7 @@ RABBIT_CONNECTED,REDIS_CONNECTED,TRP_HASHES_ASSIGNED,TRP_SUBDIVISION_SECONDS,TRP
 log = obs.setup_logging("trp")
 r = None
 channel = None
+tracer = None
 # -------------------------
 # CONEXIONES
 # -------------------------
