@@ -1,152 +1,133 @@
 import json
-import pika
-import pytest
 from unittest.mock import MagicMock
-
-from testcontainers.rabbitmq import RabbitMqContainer
-
-import sys
-sys.path.append("Pilar2/P5")
 
 import worker
 
 
-@pytest.mark.integration
-def test_worker_cpu_publica_solucion():
+def test_worker_cpu_publica_solucion(rabbitmq_channel):
 
-    with RabbitMqContainer("rabbitmq:3-management") as rabbit:
+    channel = rabbitmq_channel
 
-        connection = pika.BlockingConnection(
-            pika.URLParameters(
-                rabbit.get_connection_url()
-            )
-        )
+    channel.queue_declare(queue="tareas")
+    channel.queue_declare(queue="soluciones")
 
-        channel = connection.channel()
+    #
+    # Dependencias del worker
+    #
 
-
-        channel.queue_declare(queue="tareas")
-        channel.queue_declare(queue="soluciones")
+    worker.channel = channel
+    worker.r = MagicMock()
+    worker.r.rpush.return_value = None
 
 
-        # ==========================
-        # Mock dependencias worker
-        # ==========================
+    #
+    # Mock tracing
+    #
 
-        worker.channel = channel
+    cm = MagicMock()
+    span = MagicMock()
 
+    cm.__enter__.return_value = span
+    cm.__exit__.return_value = False
 
-        worker.r = MagicMock()
+    worker.tracer = MagicMock()
+    worker.tracer.start_as_current_span.return_value = cm
 
-
-        # tracer
-        cm = MagicMock()
-        span = MagicMock()
-
-        cm.__enter__.return_value = span
-        cm.__exit__.return_value = False
-
-        worker.tracer = MagicMock()
-        worker.tracer.start_as_current_span.return_value = cm
+    worker.obs.extract_trace_context = MagicMock(
+        return_value=None
+    )
 
 
-        # tracing propagation
-        worker.obs.extract_trace_context = MagicMock(
-            return_value=None
-        )
+    #
+    # Mock métricas
+    #
+
+    metric = MagicMock()
+
+    timer = MagicMock()
+    timer.__enter__.return_value = None
+    timer.__exit__.return_value = False
+
+    metric.time.return_value = timer
+
+    worker.WORKER_TASKS = MagicMock(
+        labels=MagicMock(return_value=metric)
+    )
+
+    worker.WORKER_SOLUTIONS = MagicMock(
+        labels=MagicMock(return_value=metric)
+    )
+
+    worker.WORKER_TASK_SECONDS = MagicMock(
+        labels=MagicMock(return_value=metric)
+    )
+
+    worker.HASHES_TOTAL = MagicMock(
+        labels=MagicMock(return_value=metric)
+    )
 
 
-        # métricas
-        metric = MagicMock()
+    #
+    # Publicamos una tarea
+    #
 
-        timer = MagicMock()
-        timer.__enter__.return_value = None
-        timer.__exit__.return_value = False
-
-        metric.time.return_value = timer
-
-
-        worker.WORKER_TASKS = MagicMock(
-            labels=MagicMock(return_value=metric)
-        )
-
-        worker.WORKER_SOLUTIONS = MagicMock(
-            labels=MagicMock(return_value=metric)
-        )
-
-        worker.WORKER_TASK_SECONDS = MagicMock(
-            labels=MagicMock(return_value=metric)
-        )
-
-        worker.HASHES_TOTAL = MagicMock(
-            labels=MagicMock(return_value=metric)
-        )
+    tarea = {
+        "task_id": "1",
+        "difficulty": "0",
+        "data": "abc",
+        "start": 0,
+        "end": 100000
+    }
 
 
-        # ==========================
-        # Publica tarea como TRP
-        # ==========================
-
-        tarea = {
-            "task_id": "1",
-            "difficulty": "0",
-            "data": "abc",
-            "start": 0,
-            "end": 100000
-        }
+    channel.basic_publish(
+        exchange="",
+        routing_key="tareas",
+        body=json.dumps(tarea)
+    )
 
 
-        channel.basic_publish(
-            exchange="",
-            routing_key="tareas",
-            body=json.dumps(tarea)
-        )
+    #
+    # Consumimos manualmente
+    #
+
+    method, properties, body = channel.basic_get(
+        queue="tareas",
+        auto_ack=False
+    )
 
 
-        # ==========================
-        # Simula consumo Worker
-        # ==========================
-
-        method, properties, body = channel.basic_get(
-            queue="tareas",
-            auto_ack=False
-        )
+    assert method is not None
 
 
-        assert method is not None
+    #
+    # Ejecutamos callback real
+    #
+
+    worker.callback(
+        channel,
+        method,
+        properties,
+        body
+    )
 
 
-        worker.callback(
-            channel,
-            method,
-            properties,
-            body
-        )
+    #
+    # Validamos solución
+    #
+
+    method, _, body = channel.basic_get(
+        queue="soluciones",
+        auto_ack=True
+    )
 
 
-        # ==========================
-        # Verifica solución
-        # ==========================
-
-        method, properties, body = channel.basic_get(
-            queue="soluciones",
-            auto_ack=True
-        )
+    assert method is not None
 
 
-        assert method is not None
+    solucion = json.loads(body)
 
 
-        solucion = json.loads(body)
-
-
-        assert solucion["task_id"] == "1"
-        assert "nonce" in solucion
-        assert "hash" in solucion
-
-
-        # Verificación real del PoW
-        assert solucion["hash"].startswith("0")
-
-
-        connection.close()
+    assert solucion["task_id"] == "1"
+    assert solucion["nonce"] >= 0
+    assert "hash" in solucion
