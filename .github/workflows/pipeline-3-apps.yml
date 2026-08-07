@@ -96,35 +96,35 @@ jobs:
           docker push "${IMAGE}:latest"
   
   integration-tests:
-  name: Integration Tests
-  needs: deploy
-  runs-on: ubuntu-latest
+    name: Integration Tests
+    needs: deploy
+    runs-on: ubuntu-latest
 
-  services:
-    rabbitmq:
-      image: rabbitmq:3-management
-      ports:
-        - 5672:5672
-      options: >-
-        --health-cmd "rabbitmq-diagnostics -q ping"
-        --health-interval 10s
-        --health-timeout 5s
-        --health-retries 5
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
-  steps:
-    - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install dependencies
-      run: |
-        pip install -r Pilar2/P5/requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r Pilar2/P5/requirements.txt
 
-    - name: Run integration tests
-      run: |
-        pytest Pilar2/P5/tests/integracion -v
+      - name: Run integration tests
+        run: |
+          pytest Pilar2/P5/tests/integracion -v
 
   deploy:
     name: Deploy to GKE

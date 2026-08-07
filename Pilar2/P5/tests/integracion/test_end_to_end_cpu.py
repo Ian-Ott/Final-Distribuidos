@@ -115,7 +115,7 @@ def test_end_to_end_cpu(rabbitmq_channel):
             method,
             properties,
             body,
-        )
+        ) 
 
         method2, _, body2 = channel.basic_get(
             queue="soluciones",
