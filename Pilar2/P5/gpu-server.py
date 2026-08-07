@@ -19,6 +19,10 @@ from metrics import GPU_MINE_REQUESTS, GPU_SOLUTIONS, GPU_MINE_SECONDS,RABBIT_CO
 log = obs.setup_logging("gpu-server")
 app = FastAPI()
 
+@app.on_event("startup")
+def startup():
+    main()
+
 
 
 class CudaDeviceProp(ctypes.Structure):
