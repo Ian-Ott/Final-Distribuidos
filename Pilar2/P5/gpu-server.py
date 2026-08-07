@@ -304,6 +304,14 @@ def main():
     global channel
     global libcudart
 
+    # CUDA Runtime
+    path = find_library("cudart")
+
+    if path is None:
+        path = "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12"
+
+    libcudart = ctypes.CDLL(path)
+    
     libcudart.cudaGetDevice.argtypes = [
         ctypes.POINTER(c_int)
     ]
@@ -326,13 +334,7 @@ def main():
         app.mount("/metrics", _metrics_app)
     obs.instrument_fastapi(app)
 
-    # CUDA Runtime
-    path = find_library("cudart")
-
-    if path is None:
-        path = "/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12"
-
-    libcudart = ctypes.CDLL(path)
+    
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     SERVICE_UP.labels(service="gpu-server").set(1)
 
