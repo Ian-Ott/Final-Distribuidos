@@ -16,7 +16,8 @@ def test_end_to_end_cpu(rabbitmq_channel):
     channel.queue_declare(queue="tareas_pool")
     channel.queue_declare(queue="tareas")
     channel.queue_declare(queue="soluciones")
-
+    
+    trp.r = MagicMock()
     trp.r.get.return_value = "0"
     trp.r.rpush.return_value = None
 

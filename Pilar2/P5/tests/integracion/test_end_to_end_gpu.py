@@ -17,6 +17,7 @@ def test_end_to_end_cpu(rabbitmq_channel):
     channel.queue_declare(queue="tareas")
     channel.queue_declare(queue="soluciones")
 
+    trp.r = MagicMock()
     trp.r.get.return_value = "00"
     trp.r.rpush.return_value = None
 
@@ -129,4 +130,4 @@ def test_end_to_end_cpu(rabbitmq_channel):
     assert solucion is not None
     assert solucion["task_id"] == "999"
     assert solucion["nonce"] >= 0
-    assert solucion["hash"].startswith("0")
+    assert solucion["hash"].startswith("00")
