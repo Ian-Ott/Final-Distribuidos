@@ -20,13 +20,13 @@ def test_end_to_end_cpu(rabbitmq_channel):
     trp.r = MagicMock()
     trp.r.get.return_value = "00"
     trp.r.rpush.return_value = None
-    
+
     worker.r = MagicMock()
     worker.r.rpush.return_value = None
 
     # Inyectamos el canal a ambos módulos
     trp.channel = channel
-    worker.ch = channel
+    worker.channel = channel
 
     #mockeamos dependencias irrelevantes para el test
     cm = MagicMock()
@@ -104,7 +104,7 @@ def test_end_to_end_cpu(rabbitmq_channel):
 
     while True:
 
-        method, properties, body = ch.basic_get(
+        method, properties, body = channel.basic_get(
             queue="tareas",
             auto_ack=False,
         )
@@ -113,13 +113,13 @@ def test_end_to_end_cpu(rabbitmq_channel):
             break
 
         worker.callback(
-            ch,
+            channel,
             method,
             properties,
             body,
         )
 
-        method2, _, body2 = ch.basic_get(
+        method2, _, body2 = channel.basic_get(
             queue="soluciones",
             auto_ack=True,
         )
