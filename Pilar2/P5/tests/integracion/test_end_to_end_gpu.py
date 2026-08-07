@@ -20,7 +20,8 @@ def test_end_to_end_cpu(rabbitmq_channel):
     trp.r = MagicMock()
     trp.r.get.return_value = "00"
     trp.r.rpush.return_value = None
-
+    
+    worker.r = MagicMock()
     worker.r.rpush.return_value = None
 
     # Inyectamos el canal a ambos módulos
