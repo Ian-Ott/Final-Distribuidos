@@ -20,7 +20,9 @@ log = obs.setup_logging("worker-cpu")
 WORKER_TYPE = "cpu"
 WORKER_ID = str(uuid.uuid4())[:8] # Generamos un ID aleatorio único. Le tomamos solo los primeros 8 caracteres.
 HAS_GPU = False # No mina en GPU
-
+r = None
+channel = None
+tracer = None
 
 # Retry loop para conectarse a rabbitmq
 def rabbitmq_ssl_context():

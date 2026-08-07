@@ -24,7 +24,9 @@ WORKER_TYPE = "gpu"
 # de gpu-server según el deployment, pero igual queda preparado si en algún
 # momento se escala). Mismo patrón que ya usa worker_cpu.py.
 WORKER_ID = str(uuid.uuid4())[:8]
-
+r = None
+channel = None
+tracer = None
 
 
 
