@@ -1,40 +1,50 @@
 import json
-import pika
 from time import sleep
+
+import pika
+from testcontainers.rabbitmq import RabbitMqContainer
+
 
 def test_worker_cpu_publica_solucion():
 
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters("localhost")
-    )
+    with RabbitMqContainer("rabbitmq:3-management") as rabbit:
 
-    channel = connection.channel()
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=rabbit.get_container_host_ip(),
+                port=int(rabbit.get_exposed_port(5672)),
+            )
+        )
 
-    channel.queue_declare("tareas")
-    channel.queue_declare("soluciones")
+        channel = connection.channel()
 
-    tarea = {
-        "task_id": "1",
-        "difficulty": "0",
-        "data": "abc",
-        "start": 0,
-        "end": 100000
-    }
+        channel.queue_declare(queue="tareas")
+        channel.queue_declare(queue="soluciones")
 
-    channel.basic_publish(
-        exchange="",
-        routing_key="tareas",
-        body=json.dumps(tarea)
-    )
+        tarea = {
+            "task_id": "1",
+            "difficulty": "0",
+            "data": "abc",
+            "start": 0,
+            "end": 100000
+        }
 
-    sleep(3)
+        channel.basic_publish(
+            exchange="",
+            routing_key="tareas",
+            body=json.dumps(tarea)
+        )
 
-    method, _, body = channel.basic_get("soluciones")
+        sleep(3)
 
-    assert method is not None
+        method, _, body = channel.basic_get("soluciones")
 
-    solucion = json.loads(body)
+        assert method is not None
 
-    assert solucion["task_id"] == "1"
-    assert "nonce" in solucion
-    assert "hash" in solucion
+        solucion = json.loads(body)
+
+        assert solucion["task_id"] == "1"
+        assert "nonce" in solucion
+        assert "hash" in solucion
+
+        connection.close()

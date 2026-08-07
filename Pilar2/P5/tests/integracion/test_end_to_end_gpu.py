@@ -1,37 +1,47 @@
 import json
-import pika
 from time import sleep
+
+import pika
+from testcontainers.rabbitmq import RabbitMqContainer
+
 
 def test_end_to_end_gpu():
 
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters("localhost")
-    )
+    with RabbitMqContainer("rabbitmq:3-management") as rabbit:
 
-    channel = connection.channel()
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=rabbit.get_container_host_ip(),
+                port=int(rabbit.get_exposed_port(5672)),
+            )
+        )
 
-    channel.queue_declare("tareas_pool")
-    channel.queue_declare("soluciones")
+        channel = connection.channel()
 
-    tarea = {
-        "task_id": "gpu1",
-        "difficulty": "00",
-        "data": "gpu-block"
-    }
+        channel.queue_declare(queue="tareas_pool")
+        channel.queue_declare(queue="soluciones")
 
-    channel.basic_publish(
-        exchange="",
-        routing_key="tareas_pool",
-        body=json.dumps(tarea)
-    )
+        tarea = {
+            "task_id": "gpu1",
+            "difficulty": "00",
+            "data": "gpu-block"
+        }
 
-    sleep(5)
+        channel.basic_publish(
+            exchange="",
+            routing_key="tareas_pool",
+            body=json.dumps(tarea)
+        )
 
-    method, _, body = channel.basic_get("soluciones")
+        sleep(5)
 
-    assert method is not None
+        method, _, body = channel.basic_get("soluciones")
 
-    solucion = json.loads(body)
+        assert method is not None
 
-    assert solucion["task_id"] == "gpu1"
-    assert solucion["hash"].startswith("00")
+        solucion = json.loads(body)
+
+        assert solucion["task_id"] == "gpu1"
+        assert solucion["hash"].startswith("00")
+
+        connection.close()
