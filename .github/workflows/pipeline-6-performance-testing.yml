@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
 
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - "locust/**"
-      - "k8s/gke/observability/locust-deployment.yaml"
-      - "k8s/gke/observability/locust-service.yaml"
+      - "docker/locust/**"
+      - "k8s/gke/observability/locust-*.yaml"
       - ".github/workflows/pipeline-6-performance.yml"
 
 permissions:
@@ -16,16 +16,145 @@ permissions:
   contents: read
 
 jobs:
+
+  # ==========================================================================
+  # 1. SEGURIDAD
+  # ==========================================================================
+
   gitleaks:
     uses: ./.github/workflows/gitleaks.yml
 
-  deploy-locust:
-    name: Build & Deploy Locust
-    needs: gitleaks
+
+  # ==========================================================================
+  # 2. BUILD + PUSH
+  # ==========================================================================
+
+  build:
+    name: Build and Push Locust
+    needs:
+      - gitleaks
+
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
+
       - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker \
+            us-central1-docker.pkg.dev \
+            --quiet
+
+      - name: Build Locust image
+        run: |
+          IMAGE="us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${GITHUB_SHA}"
+
+          docker build \
+            -t "$IMAGE" \
+            docker/locust
+
+      - name: Push Locust image
+        run: |
+          IMAGE="us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${GITHUB_SHA}"
+
+          docker push "$IMAGE"
+
+
+  # ==========================================================================
+  # 3. DEPLOY
+  # ==========================================================================
+
+  deploy:
+    name: Deploy Locust
+    needs:
+      - build
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Ensure namespace
+        run: |
+          kubectl apply \
+            -f k8s/gke/observability/namespace.yaml
+
+      - name: Apply Locust ConfigMap
+        run: |
+          kubectl apply \
+            -f k8s/gke/observability/locust-config.yaml
+
+      - name: Apply Locust deployment
+        run: |
+          kubectl apply \
+            -f k8s/gke/observability/locust-deployment.yaml
+
+      - name: Apply Locust service
+        run: |
+          kubectl apply \
+            -f k8s/gke/observability/locust-service.yaml
+
+      - name: Update Locust image
+        run: |
+          IMAGE="us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${GITHUB_SHA}"
+
+          kubectl -n observability \
+            set image deployment/locust \
+            locust="$IMAGE"
+
+      - name: Wait for Locust
+        run: |
+          kubectl -n observability \
+            rollout status deployment/locust \
+            --timeout=300s
+
+
+  # ==========================================================================
+  # 4. PREFLIGHT
+  # ==========================================================================
+
+  preflight:
+    name: Validate system before performance tests
+
+    needs:
+      - deploy
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
 
       - uses: google-github-actions/auth@v2
         with:
@@ -37,32 +166,429 @@ jobs:
           cluster_name: sdypp-cluster
           location: us-central1-a
 
-      - name: Configurar Docker para Artifact Registry
+      - name: Validate Locust
         run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          kubectl -n observability \
+            wait --for=condition=Ready \
+            pod -l app=locust \
+            --timeout=120s
 
-      - name: Build imagen Locust
+      - name: Validate NCT
         run: |
-          docker build \
-            -t us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }} \
-            -t us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest \
-            ./locust
+          kubectl -n sdypp \
+            wait --for=condition=Ready \
+            pod -l app=blockchain-nct \
+            --timeout=120s
 
-      - name: Push imagen
+      - name: Validate TrP
         run: |
-          docker push us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }}
-          docker push us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest
+          kubectl -n sdypp \
+            wait --for=condition=Ready \
+            pod -l app=blockchain-trp \
+            --timeout=120s
 
-      - name: Deploy Locust
+      - name: Validate workers
         run: |
-          kubectl apply -f k8s/gke/observability/locust-service.yaml
-          kubectl apply -f k8s/gke/observability/locust-deployment.yaml
+          kubectl -n sdypp \
+            wait --for=condition=Ready \
+            pod -l app=blockchain-worker \
+            --timeout=120s
 
-      - name: Actualizar imagen
+      - name: Validate NCT HTTP from Locust
         run: |
-          kubectl -n observability set image deployment/locust \
-            locust=us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:${{ github.sha }}
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
 
-      - name: Esperar rollout
+          kubectl -n observability exec "$POD" -- \
+            python - <<'PY'
+          import urllib.request
+
+          url = "http://blockchain-nct.sdypp.svc.cluster.local:8000/healthz"
+
+          with urllib.request.urlopen(url, timeout=10) as response:
+              assert response.status == 200
+
+          print("NCT HTTP OK")
+          PY
+
+
+  # ==========================================================================
+  # 5. BASELINE
+  # ==========================================================================
+
+  performance-baseline:
+
+    name: Performance - Baseline
+
+    needs:
+      - preflight
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Execute baseline
         run: |
-          kubectl -n observability rollout status deployment/locust --timeout=300s
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            env \
+              LOCUST_SCENARIO=baseline \
+              locust \
+                -f /home/locust/locustfile.py \
+                --headless \
+                --host=http://blockchain-nct.sdypp.svc.cluster.local:8000 \
+                --only-summary \
+                --csv=/tmp/baseline
+
+          kubectl -n observability logs "$POD" --tail=300
+
+      - name: Collect results
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl cp \
+            observability/$POD:/tmp/baseline_stats.csv \
+            baseline_stats.csv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline
+          path: baseline_stats.csv
+
+
+  # ==========================================================================
+  # 6. LOAD
+  # ==========================================================================
+
+  performance-load:
+
+    name: Performance - Load
+
+    needs:
+      - performance-baseline
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Execute load
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            env LOCUST_SCENARIO=load \
+            locust \
+              -f /home/locust/locustfile.py \
+              --headless \
+              --host=http://blockchain-nct.sdypp.svc.cluster.local:8000 \
+              --only-summary
+
+
+  # ==========================================================================
+  # 7. STRESS
+  # ==========================================================================
+
+  performance-stress:
+
+    name: Performance - Stress
+
+    needs:
+      - performance-load
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Execute stress
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            env LOCUST_SCENARIO=stress \
+            locust \
+              -f /home/locust/locustfile.py \
+              --headless \
+              --host=http://blockchain-nct.sdypp.svc.cluster.local:8000 \
+              --only-summary
+
+
+  # ==========================================================================
+  # 8. SPIKE
+  # ==========================================================================
+
+  performance-spike:
+
+    name: Performance - Spike
+
+    needs:
+      - performance-stress
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Execute spike
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            env LOCUST_SCENARIO=spike \
+            locust \
+              -f /home/locust/locustfile.py \
+              --headless \
+              --host=http://blockchain-nct.sdypp.svc.cluster.local:8000 \
+              --only-summary
+
+
+  # ==========================================================================
+  # 9. SOAK
+  # ==========================================================================
+
+  performance-soak:
+
+    name: Performance - Soak
+
+    needs:
+      - performance-spike
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Execute soak
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            env LOCUST_SCENARIO=soak \
+            locust \
+              -f /home/locust/locustfile.py \
+              --headless \
+              --host=http://blockchain-nct.sdypp.svc.cluster.local:8000 \
+              --only-summary
+
+
+  # ==========================================================================
+  # 10. SYSTEM MATRIX
+  # ==========================================================================
+
+  system-matrix:
+
+    name: System Matrix
+
+    needs:
+      - performance-soak
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        include:
+
+          - name: bulk-1
+            bulk: 1
+            difficulty: 1
+            fragmentation: 1
+            workers: 4
+
+          - name: bulk-100
+            bulk: 100
+            difficulty: 2
+            fragmentation: 10
+            workers: 4
+
+          - name: bulk-1000
+            bulk: 1000
+            difficulty: 4
+            fragmentation: 25
+            workers: 4
+
+          - name: bulk-10000
+            bulk: 10000
+            difficulty: 6
+            fragmentation: 50
+            workers: 4
+
+          - name: bulk-100000
+            bulk: 100000
+            difficulty: 8
+            fragmentation: 50
+            workers: 4
+
+          - name: scale-2m
+            bulk: 1000
+            difficulty: 4
+            fragmentation: 25
+            workers: 8
+
+          - name: scale-2m-large
+            bulk: 10000
+            difficulty: 6
+            fragmentation: 50
+            workers: 8
+
+    steps:
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: sdypp-cluster
+          location: us-central1-a
+
+      - name: Scale workers
+        run: |
+          kubectl -n sdypp scale deployment/blockchain-worker \
+            --replicas=${{ matrix.workers }}
+
+          kubectl -n sdypp rollout status \
+            deployment/blockchain-worker \
+            --timeout=300s
+
+      - name: Execute system scenario
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            env \
+              LOCUST_SCENARIO=system \
+              LOCUST_BULK=${{ matrix.bulk }} \
+              LOCUST_DIFFICULTY=${{ matrix.difficulty }} \
+              LOCUST_FRAGMENTATION=${{ matrix.fragmentation }} \
+              locust \
+                -f /home/locust/locustfile.py \
+                --headless \
+                --host=http://blockchain-nct.sdypp.svc.cluster.local:8000 \
+                --only-summary
+
+      - name: Validate blockchain
+        run: |
+          POD=$(kubectl -n observability \
+            get pods \
+            -l app=locust \
+            -o jsonpath='{.items[0].metadata.name}')
+
+          kubectl -n observability exec "$POD" -- \
+            python - <<'PY'
+          import urllib.request
+          import json
+
+          url = "http://blockchain-nct.sdypp.svc.cluster.local:8000/validate"
+
+          with urllib.request.urlopen(url, timeout=30) as response:
+              data = json.loads(response.read())
+
+          print(data)
+
+          if not data.get("valid"):
+              raise SystemExit("Blockchain validation failed")
+          PY
+
+      - name: Restore M workers
+        if: always()
+        run: |
+          kubectl -n sdypp scale deployment/blockchain-worker \
+            --replicas=4

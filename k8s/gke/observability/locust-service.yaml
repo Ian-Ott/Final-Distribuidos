@@ -1,17 +1,19 @@
 apiVersion: v1
 kind: Service
-
 metadata:
   name: locust
   namespace: observability
-
 spec:
-  type: NodePort
+  type: ClusterIP
 
   selector:
     app: locust
 
   ports:
-  - name: web
-    port: 8089
-    targetPort: 8089
+    - name: web
+      port: 8089
+      targetPort: 8089
+
+    - name: metrics
+      port: 9646
+      targetPort: 9646

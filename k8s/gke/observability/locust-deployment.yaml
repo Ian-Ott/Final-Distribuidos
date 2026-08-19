@@ -19,6 +19,11 @@ spec:
     metadata:
       labels:
         app: locust
+  
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9646"
+        prometheus.io/path: "/metrics"
 
     spec:
       securityContext:
@@ -35,30 +40,54 @@ spec:
         effect: NoSchedule
 
       containers:
-      - name: locust
-        securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-              - ALL
+        - name: locust
+          securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
 
-        image: us-central1-docker.pkg.dev/tp-final-distribuidos/sdypp/locust:latest
-        imagePullPolicy: Always
+          image: IMAGE_TAG
+          imagePullPolicy: Always
 
-        args:
-          - -f
-          - /home/locust/locustfile.py
-          - --host=http://blockchain-nct.sdypp.svc.cluster.local
-          - --web-host=0.0.0.0
+          args:
+            - -f
+            - /home/locust/locustfile.py
+            - --host=http://blockchain-nct.sdypp.svc.cluster.local
+            - --web-host=0.0.0.0
+          
+          envFrom:
+              - configMapRef:
+                  name: locust-config
+          ports:
+            - name: metrics
+              containerPort: 9646
+              protocol: TCP
 
-        ports:
-        - containerPort: 8089
+          env:
+            - name: LOCUST_METRICS_PORT
+              value: "9646"
 
-        resources:
-          requests:
-            cpu: 50m
-            memory: 128Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
+            - name: TRANSACTION_ENDPOINT
+              value: "/transaction"
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          
+          readinessProbe:
+            tcpSocket:
+              port: 8089
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            tcpSocket:
+              port: 8089
+            initialDelaySeconds: 30
+            periodSeconds: 30

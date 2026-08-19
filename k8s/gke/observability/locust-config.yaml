@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: locust-config
+  namespace: observability
+
+data:
+  TRANSACTION_ENDPOINT: "/transaction"
+  LOCUST_SENDER_PREFIX: "locust"
+  LOCUST_RECEIVER_PREFIX: "miner"
