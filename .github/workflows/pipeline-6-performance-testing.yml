@@ -245,18 +245,13 @@ jobs:
 
 
       # ======================================================================
-      # 4. VALIDAR SERVICIOS DE NCT Y TRP
+      # 4. VALIDAR SERVICIOS DE NCT
       # ======================================================================
 
       - name: Validate NCT service
         run: |
           kubectl -n sdypp \
             get service blockchain-nct
-
-      - name: Validate TrP service
-        run: |
-          kubectl -n sdypp \
-            get service blockchain-trp
 
 
       # ======================================================================
