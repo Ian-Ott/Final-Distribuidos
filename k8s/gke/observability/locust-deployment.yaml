@@ -68,7 +68,6 @@ spec:
           env:
             - name: LOCUST_METRICS_PORT
               value: "9646"
-
             - name: TRANSACTION_ENDPOINT
               value: "/transaction"
 

@@ -63,7 +63,7 @@ jobs:
 
           docker build \
             -t "$IMAGE" \
-            /locust
+            ./locust
 
       - name: Push Locust image
         run: |
