@@ -138,12 +138,28 @@ jobs:
             --timeout=300s
 
 
-  # ==========================================================================
+    # ==========================================================================
   # 4. PREFLIGHT
+  #
+  # Verifica que el sistema esté disponible antes de ejecutar los escenarios
+  # de Locust.
+  #
+  # Cluster principal:
+  #   - Locust
+  #   - NCT
+  #   - TrP
+  #
+  # Cluster profesor:
+  #   - worker CPU
+  #   - worker GPU
+  #
+  # IMPORTANTE:
+  # Este job NO mide rendimiento.
+  # Solo comprueba que la infraestructura necesaria esté disponible.
   # ==========================================================================
 
   preflight:
-    name: Validate system before performance tests
+    name: Validate distributed system before performance tests
 
     needs:
       - deploy
@@ -156,62 +172,198 @@ jobs:
 
     steps:
 
-      - uses: google-github-actions/auth@v2
+      # ======================================================================
+      # CHECKOUT
+      # ======================================================================
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      # ======================================================================
+      # AUTENTICACIÓN GCP
+      # ======================================================================
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_WIF_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/get-gke-credentials@v2
+
+      # ======================================================================
+      # CLUSTER PRINCIPAL
+      # ======================================================================
+
+      - name: Get main GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: sdypp-cluster
           location: us-central1-a
 
+
+      # ======================================================================
+      # 1. LOCTUST
+      # ======================================================================
+
       - name: Validate Locust
         run: |
           kubectl -n observability \
-            wait --for=condition=Ready \
-            pod -l app=locust \
+            wait \
+            --for=condition=Ready \
+            pod \
+            -l app=locust \
             --timeout=120s
+
+
+      # ======================================================================
+      # 2. NCT
+      # ======================================================================
 
       - name: Validate NCT
         run: |
           kubectl -n sdypp \
-            wait --for=condition=Ready \
-            pod -l app=blockchain-nct \
+            wait \
+            --for=condition=Ready \
+            pod \
+            -l app=blockchain-nct \
             --timeout=120s
+
+
+      # ======================================================================
+      # 3. TRP
+      # ======================================================================
 
       - name: Validate TrP
         run: |
           kubectl -n sdypp \
-            wait --for=condition=Ready \
-            pod -l app=blockchain-trp \
+            wait \
+            --for=condition=Ready \
+            pod \
+            -l app=blockchain-trp \
             --timeout=120s
 
-      - name: Validate workers
+
+      # ======================================================================
+      # 4. VALIDAR SERVICIOS DE NCT Y TRP
+      # ======================================================================
+
+      - name: Validate NCT service
         run: |
           kubectl -n sdypp \
-            wait --for=condition=Ready \
-            pod -l app=blockchain-worker \
-            --timeout=120s
+            get service blockchain-nct
+
+      - name: Validate TrP service
+        run: |
+          kubectl -n sdypp \
+            get service blockchain-trp
+
+
+      # ======================================================================
+      # 5. VALIDAR HTTP DESDE LOCTUST HACIA NCT
+      #
+      # Esto es importante porque comprobar que el pod está Ready no demuestra
+      # que Locust pueda comunicarse realmente con NCT.
+      # ======================================================================
 
       - name: Validate NCT HTTP from Locust
         run: |
+
           POD=$(kubectl -n observability \
             get pods \
             -l app=locust \
             -o jsonpath='{.items[0].metadata.name}')
 
           kubectl -n observability exec "$POD" -- \
-            python - <<'PY'
+            python -c '
           import urllib.request
 
           url = "http://blockchain-nct.sdypp.svc.cluster.local:8000/healthz"
 
           with urllib.request.urlopen(url, timeout=10) as response:
-              assert response.status == 200
+              if response.status != 200:
+                  raise RuntimeError(
+                      f"NCT healthcheck returned HTTP {response.status}"
+                  )
 
           print("NCT HTTP OK")
-          PY
+          '
+
+
+      # ======================================================================
+      # 6. CAMBIAR AL CLUSTER DEL PROFESOR
+      #
+      # Desde acá kubectl deja de apuntar a sdypp-cluster.
+      #
+      # KUBE_CONFIG_PROFESOR es exactamente el mecanismo que ya utilizás
+      # en Pipeline 4.
+      # ======================================================================
+
+      - name: Configure Profesor cluster
+        run: |
+          mkdir -p ~/.kube
+
+          echo "${{ secrets.KUBE_CONFIG_PROFESOR }}" \
+            | base64 -d > ~/.kube/config
+
+          kubectl config current-context
+
+
+      # ======================================================================
+      # 7. VALIDAR WORKERS CPU
+      # ======================================================================
+
+      - name: Validate CPU workers
+        run: |
+
+          kubectl get pods \
+            -l app=blockchain-worker \
+            --field-selector=status.phase=Running
+
+          kubectl wait \
+            --for=condition=Ready \
+            pod \
+            -l app=blockchain-worker \
+            --timeout=120s
+
+
+      # ======================================================================
+      # 8. VALIDAR GPU SERVER
+      # ======================================================================
+
+      - name: Validate GPU server
+        run: |
+
+          kubectl get pods \
+            -l app=blockchain-gpu-server \
+            --field-selector=status.phase=Running
+
+          kubectl wait \
+            --for=condition=Ready \
+            pod \
+            -l app=blockchain-gpu-server \
+            --timeout=120s
+
+
+      # ======================================================================
+      # 9. MOSTRAR ESTADO FINAL DEL CLUSTER PROFESOR
+      # ======================================================================
+
+      - name: Show worker infrastructure
+        run: |
+
+          echo "=== Workers ==="
+
+          kubectl get pods \
+            -l app=blockchain-worker \
+            -o wide
+
+          echo ""
+          echo "=== GPU Server ==="
+
+          kubectl get pods \
+            -l app=blockchain-gpu-server \
+            -o wide
 
 
   # ==========================================================================
