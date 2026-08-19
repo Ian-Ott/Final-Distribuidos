@@ -7,7 +7,7 @@ on:
     branches:
       - main
     paths:
-      - "docker/locust/**"
+      - "locust/**"
       - "k8s/gke/observability/locust-*.yaml"
       - ".github/workflows/pipeline-6-performance.yml"
 
