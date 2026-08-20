@@ -15,7 +15,6 @@ from prometheus_client import (
     Counter,
     Histogram,
     Gauge,
-    start_http_server,
 )
 
 
@@ -226,13 +225,13 @@ def start_metrics_server():
 
 @events.init.add_listener
 def on_locust_init(environment, **kwargs):
-    """
-    Se ejecuta cuando Locust inicializa el proceso.
-
-    Levanta el endpoint /metrics.
-    """
-
-    start_metrics_server()
+    # El servidor de métricas ya está levantado por el proceso
+    # principal de Locust en el Deployment.
+    #
+    # No iniciar otro servidor HTTP aquí porque los tests ejecutados
+    # mediante `locust` dentro del mismo contenedor provocarían:
+    #
+    # OSError: [Errno 98] Address already in use
 
     LOCUST_TEST_STATUS.labels(
         scenario=SCENARIO
@@ -508,4 +507,3 @@ class PerformanceShape(LoadTestShape):
         ).set(0)
 
         return None
-        

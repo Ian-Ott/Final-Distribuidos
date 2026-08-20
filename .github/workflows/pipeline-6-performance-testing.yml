@@ -403,6 +403,8 @@ jobs:
             -l app=locust \
             -o jsonpath='{.items[0].metadata.name}')
 
+          echo "Locust pod: $POD"
+
           kubectl -n observability exec "$POD" -- \
             env \
               LOCUST_SCENARIO=baseline \
@@ -413,7 +415,7 @@ jobs:
                 --only-summary \
                 --csv=/tmp/baseline
 
-          kubectl -n observability logs "$POD" --tail=300
+          kubectl -n observability logs "$POD" --tail=200
 
       - name: Collect results
         run: |

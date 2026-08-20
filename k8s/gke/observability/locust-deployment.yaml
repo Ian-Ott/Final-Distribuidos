@@ -97,4 +97,4 @@ spec:
 
       volumes:
         - name: locust-results
-          emptyDir: {}
+          mountPath: /tmp
