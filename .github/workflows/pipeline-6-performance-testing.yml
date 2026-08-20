@@ -299,9 +299,15 @@ jobs:
           mkdir -p ~/.kube
 
           echo "${{ secrets.KUBE_CONFIG_PROFESOR }}" \
-            | base64 -d > ~/.kube/config
+            | base64 -d > ~/.kube/profesor-config
 
+          chmod 600 ~/.kube/profesor-config
+
+          export KUBECONFIG="$HOME/.kube/profesor-config"
+
+          kubectl config get-contexts
           kubectl config current-context
+          kubectl get nodes
 
 
 
@@ -312,8 +318,8 @@ jobs:
 
       - name: Validate GPU server
         run: |
-
-          kubectl get pods \
+          export KUBECONFIG="$HOME/.kube/profesor-config"
+          kubectl get pods -A \
             -l app=blockchain-gpu-server \
             --field-selector=status.phase=Running
 
@@ -330,17 +336,17 @@ jobs:
 
       - name: Show worker infrastructure
         run: |
-
+          export KUBECONFIG="$HOME/.kube/profesor-config"
           echo "=== Workers ==="
 
-          kubectl get pods \
+          kubectl get pods -A \
             -l app=blockchain-worker \
             -o wide
 
           echo ""
           echo "=== GPU Server ==="
 
-          kubectl get pods \
+          kubectl get pods -A \
             -l app=blockchain-gpu-server \
             -o wide
 

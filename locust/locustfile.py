@@ -508,4 +508,3 @@ class PerformanceShape(LoadTestShape):
         ).set(0)
 
         return None
-        
