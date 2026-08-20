@@ -305,9 +305,12 @@ jobs:
 
           export KUBECONFIG="$HOME/.kube/profesor-config"
 
-          kubectl config get-contexts
+          echo "=== Contexto profesor ==="
           kubectl config current-context
-          kubectl get nodes
+
+          echo "=== Namespace actual ==="
+          kubectl config view --minify -o jsonpath='{..namespace}'
+          echo
 
 
 
@@ -319,11 +322,8 @@ jobs:
       - name: Validate GPU server
         run: |
           export KUBECONFIG="$HOME/.kube/profesor-config"
-          kubectl get pods -A \
-            -l app=blockchain-gpu-server \
-            --field-selector=status.phase=Running
-
-          kubectl wait \
+          kubectl -n g-amarillo \
+            wait \
             --for=condition=Ready \
             pod \
             -l app=blockchain-gpu-server \
@@ -331,7 +331,23 @@ jobs:
 
 
       # ======================================================================
-      # 8. MOSTRAR ESTADO FINAL DEL CLUSTER PROFESOR
+      # 8. VALIDAR GPU WORKERS
+      # ======================================================================
+
+      - name: Validate GPU workers
+        run: |
+          export KUBECONFIG="$HOME/.kube/profesor-config"
+
+          kubectl -n g-amarillo \
+            wait \
+            --for=condition=Ready \
+            pod \
+            -l app=blockchain-worker \
+            --timeout=120s
+
+
+      # ======================================================================
+      # 9. MOSTRAR ESTADO FINAL DEL CLUSTER PROFESOR
       # ======================================================================
 
       - name: Show worker infrastructure
@@ -339,14 +355,14 @@ jobs:
           export KUBECONFIG="$HOME/.kube/profesor-config"
           echo "=== Workers ==="
 
-          kubectl get pods -A \
+          kubectl get pods -n g-amarillo \
             -l app=blockchain-worker \
             -o wide
 
           echo ""
           echo "=== GPU Server ==="
 
-          kubectl get pods -A \
+          kubectl get pods -n g-amarillo \
             -l app=blockchain-gpu-server \
             -o wide
 
