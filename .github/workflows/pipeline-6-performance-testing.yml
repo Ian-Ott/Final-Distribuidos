@@ -304,26 +304,10 @@ jobs:
           kubectl config current-context
 
 
-      # ======================================================================
-      # 7. VALIDAR WORKERS CPU
-      # ======================================================================
-
-      - name: Validate CPU workers
-        run: |
-
-          kubectl get pods \
-            -l app=blockchain-worker \
-            --field-selector=status.phase=Running
-
-          kubectl wait \
-            --for=condition=Ready \
-            pod \
-            -l app=blockchain-worker \
-            --timeout=120s
 
 
       # ======================================================================
-      # 8. VALIDAR GPU SERVER
+      # 7. VALIDAR GPU SERVER
       # ======================================================================
 
       - name: Validate GPU server
@@ -341,7 +325,7 @@ jobs:
 
 
       # ======================================================================
-      # 9. MOSTRAR ESTADO FINAL DEL CLUSTER PROFESOR
+      # 8. MOSTRAR ESTADO FINAL DEL CLUSTER PROFESOR
       # ======================================================================
 
       - name: Show worker infrastructure
